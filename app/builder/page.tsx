@@ -75,7 +75,7 @@ export default function BuilderPage() {
       if (pagesErr) throw pagesErr;
 
       // 4) Go to editor (you already have this route pattern in the other build)
-      window.location.href = /builder/${project.id};
+      window.location.href = '/builder/${project.id}';
     } catch (e: any) {
       setErr(e?.message || "Failed to create project.");
     } finally {
