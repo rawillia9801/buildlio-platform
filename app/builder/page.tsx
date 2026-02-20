@@ -71,7 +71,7 @@ export default function BuilderPage() {
       // const { error: pagesErr } = await supabase.from("pages").insert(pages);
       // if (pagesErr) throw pagesErr;
 
-      setOk(Project created (placeholder id): ${proj.id}. Now wire your inserts.);
+   setOk(`Project created (placeholder id): ${proj.id}. Now wire your inserts.`);
       setLoading(false);
       return;
     } catch (e: any) {
