@@ -1,10 +1,15 @@
 "use client";
 
 import { useState } from "react";
-import { createBrowserClient } from "@/src/lib/supabase/browser";
+import { createBrowserClient } from "@supabase/ssr";
+
+function getURL() {
+  // Works on Vercel + local
+  if (typeof window !== "undefined") return window.location.origin;
+  return process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
+}
 
 export default function BuilderPage() {
-  const supabase = createBrowserClient();
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -13,9 +18,15 @@ export default function BuilderPage() {
     setErr(null);
 
     try {
-      // 1) Make sure user is signed in (your RLS expects ownership)
-      const { data: auth } = await supabase.auth.getUser();
-      const user = auth?.user;
+      const supabase = createBrowserClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      );
+
+      // 1) Ensure logged in
+      const { data: authData, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
+      const user = authData?.user;
       if (!user) {
         setErr("You must be signed in to create a project.");
         setLoading(false);
@@ -46,36 +57,40 @@ export default function BuilderPage() {
           slug: "home",
           title: "Home",
           nav_order: 1,
-          content_html: <section><h1>Welcome</h1><p>Your new site starts here.</p></section>,
+          content_html:
+            "<section><h1>Welcome</h1><p>Your new site starts here.</p></section>",
         },
         {
           project_id: project.id,
           slug: "about",
           title: "About",
           nav_order: 2,
-          content_html: <section><h1>About</h1><p>Tell your story in a clean, professional way.</p></section>,
+          content_html:
+            "<section><h1>About</h1><p>Tell your story in a clean, professional way.</p></section>",
         },
         {
           project_id: project.id,
           slug: "services",
           title: "Services",
           nav_order: 3,
-          content_html: <section><h1>Services</h1><p>List what you offer with clarity and confidence.</p></section>,
+          content_html:
+            "<section><h1>Services</h1><p>List what you offer with clarity and confidence.</p></section>",
         },
         {
           project_id: project.id,
           slug: "contact",
           title: "Contact",
           nav_order: 4,
-          content_html: <section><h1>Contact</h1><p>Add your contact details and a simple form later.</p></section>,
+          content_html:
+            "<section><h1>Contact</h1><p>Add your contact details and a simple form later.</p></section>",
         },
       ];
 
       const { error: pagesErr } = await supabase.from("pages").insert(pages);
       if (pagesErr) throw pagesErr;
 
-      // 4) Go to editor (you already have this route pattern in the other build)
-      window.location.href = '/builder/${project.id}';
+      // 4) Redirect
+      window.location.href = /builder/${project.id};
     } catch (e: any) {
       setErr(e?.message || "Failed to create project.");
     } finally {
