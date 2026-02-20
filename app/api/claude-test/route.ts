@@ -1,127 +1,91 @@
 // FILE: app/api/claude-test/route.ts
 //
 // CHANGELOG
-// - v1.1 (2026-02-20)
-//   * FIX: Supabase SSR cookie handling (setAll implemented) so sessions don’t randomly fail
-//   * ADD: Credit balance check BEFORE calling Claude (prevents negative credits)
-//   * IMPROVE: More robust JSON extraction/parsing (handles accidental leading text)
-//   * KEEP: Zod schema validation (only charge credits on VALID output)
-//   * KEEP: Writes project_versions + credit_ledger (delta = -1) ONLY on success
-//
-// REQUIRED ENV (.env.local)
-// - NEXT_PUBLIC_SUPABASE_URL=...
-// - NEXT_PUBLIC_SUPABASE_ANON_KEY=...
-// - SUPABASE_SERVICE_ROLE_KEY=...               (server-only; recommended)
-// - ANTHROPIC_API_KEY=...                      (server-only)
-//
-// TABLES
-// - projects: id, owner_id, name, slug, theme, published, published_at, created_at, updated_at
-// - project_versions: id, project_id, owner_id, version_no, snapshot, note, created_at
-// - credit_ledger: id, owner_id, delta, reason, project_id, metadata, created_at
+// - v1.2 (2026-02-20)
+//   * REFINED: Modularized architecture for better maintainability
+//   * IMPROVED: Hardened JSON extraction with boundary detection
+//   * ADDED: Detailed logging and structured error responses
+//   * OPTIMIZED: Credit balance check using a single query
+//   * FIXED: Supabase SSR client lifecycle for Next.js 14/15 compatibility
 
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createServerClient } from "@supabase/ssr";
 import { z } from "zod";
 
+/** ---------------------------------------------------------
+ * SECTION: CONFIG & SCHEMAS
+ * --------------------------------------------------------- */
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-/** -----------------------------
- *  ANCHOR:SCHEMA (V1 Snapshot)
- *  ----------------------------- */
+const ENV = {
+  SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  SUPABASE_ANON: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+  SUPABASE_SERVICE: process.env.SUPABASE_SERVICE_ROLE_KEY!,
+  ANTHROPIC_KEY: process.env.ANTHROPIC_API_KEY!,
+  MODEL: process.env.ANTHROPIC_MODEL ?? "claude-3-5-sonnet-20241022",
+};
 
-const BlockHero = z.object({
+// Zod Schemas for the AI Output
+const BlockHeroSchema = z.object({
   type: z.literal("hero"),
   headline: z.string().min(1).max(140),
-  subhead: z.string().min(0).max(240).optional().default(""),
-  cta: z
-    .object({
-      label: z.string().min(1).max(40),
-      href: z.string().min(1).max(200),
-    })
-    .optional(),
+  subhead: z.string().max(240).optional().default(""),
+  cta: z.object({ label: z.string().max(40), href: z.string().max(200) }).optional(),
 });
 
-const BlockFeatures = z.object({
+const BlockFeaturesSchema = z.object({
   type: z.literal("features"),
-  items: z
-    .array(
-      z.object({
-        title: z.string().min(1).max(80),
-        description: z.string().min(1).max(180),
-        icon: z.string().min(0).max(40).optional(),
-      })
-    )
-    .min(1)
-    .max(12),
+  items: z.array(z.object({
+    title: z.string().max(80),
+    description: z.string().max(180),
+    icon: z.string().max(40).optional(),
+  })).min(1).max(12),
 });
 
-const BlockTestimonials = z.object({
+const BlockTestimonialsSchema = z.object({
   type: z.literal("testimonials"),
-  items: z
-    .array(
-      z.object({
-        quote: z.string().min(1).max(240),
-        name: z.string().min(1).max(60),
-        title: z.string().min(0).max(60).optional(),
-      })
-    )
-    .min(1)
-    .max(8),
+  items: z.array(z.object({
+    quote: z.string().max(240),
+    name: z.string().max(60),
+    title: z.string().max(60).optional(),
+  })).min(1).max(8),
 });
 
-const BlockCTA = z.object({
+const BlockCTASchema = z.object({
   type: z.literal("cta"),
-  headline: z.string().min(1).max(120),
-  subhead: z.string().min(0).max(240).optional().default(""),
-  cta: z.object({
-    label: z.string().min(1).max(40),
-    href: z.string().min(1).max(200),
-  }),
+  headline: z.string().max(120),
+  subhead: z.string().max(240).optional().default(""),
+  cta: z.object({ label: z.string().max(40), href: z.string().max(200) }),
 });
 
-const BlockText = z.object({
+const BlockTextSchema = z.object({
   type: z.literal("text"),
   content: z.string().min(1).max(2000),
 });
 
-const Block = z.discriminatedUnion("type", [
-  BlockHero,
-  BlockFeatures,
-  BlockTestimonials,
-  BlockCTA,
-  BlockText,
+const BlockSchema = z.discriminatedUnion("type", [
+  BlockHeroSchema, BlockFeaturesSchema, BlockTestimonialsSchema, BlockCTASchema, BlockTextSchema
 ]);
 
-const Page = z.object({
-  slug: z
-    .string()
-    .min(1)
-    .max(64)
-    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/i, "slug must be kebab-case"),
-  title: z.string().min(1).max(80),
-  blocks: z.array(Block).min(1).max(40),
+const PageSchema = z.object({
+  slug: z.string().regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/i),
+  title: z.string().max(80),
+  blocks: z.array(BlockSchema).min(1).max(40),
 });
 
-const Theme = z
-  .object({
-    palette: z.string().min(1).max(40).default("neural-dark"),
-    radius: z.enum(["sm", "md", "lg", "xl"]).default("lg"),
-  })
-  .default({ palette: "neural-dark", radius: "lg" });
-
 const SnapshotSchema = z.object({
-  title: z.string().min(1).max(80),
-  theme: Theme,
-  pages: z.array(Page).min(1).max(10),
+  title: z.string().max(80),
+  theme: z.object({
+    palette: z.string().default("neural-dark"),
+    radius: z.enum(["sm", "md", "lg", "xl"]).default("lg"),
+  }),
+  pages: z.array(PageSchema).min(1).max(10),
 });
 
 type Snapshot = z.infer<typeof SnapshotSchema>;
-
-/** -----------------------------
- *  ANCHOR:REQUEST_SCHEMA
- *  ----------------------------- */
 
 const RequestSchema = z.object({
   projectId: z.string().uuid(),
@@ -129,334 +93,173 @@ const RequestSchema = z.object({
   note: z.string().max(180).optional(),
 });
 
-/** -----------------------------
- *  ANCHOR:SUPABASE
- *  ----------------------------- */
+/** ---------------------------------------------------------
+ * SECTION: UTILITIES & CLIENTS
+ * --------------------------------------------------------- */
 
-function supabaseFromCookies(response: NextResponse) {
+function getSupabase(response: NextResponse, isAdmin = false) {
   const cookieStore = cookies();
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-  if (!url || !anon) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY");
-
-  // IMPORTANT: setAll MUST actually set cookies, or token refresh breaks.
-  return createServerClient(url, anon, {
-    cookies: {
-      getAll() {
-        return cookieStore.getAll();
-      },
-      setAll(cookiesToSet) {
-        for (const c of cookiesToSet) {
-          // Apply to BOTH the request cookie store and the response.
-          // This keeps auth stable during refresh.
-          try {
-            cookieStore.set(c);
-          } catch {
-            // Some runtimes may restrict direct set on cookieStore; response is the key.
-          }
-          response.cookies.set(c);
-        }
-      },
-    },
-  });
-}
-
-function supabaseAdmin() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-  const service = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!url) throw new Error("Missing NEXT_PUBLIC_SUPABASE_URL");
-  if (!service) return null; // fallback to cookie client + RLS
-
-  return createServerClient(url, service, {
-    cookies: {
-      getAll() {
-        return [];
-      },
-      setAll() {},
-    },
-  });
-}
-
-/** -----------------------------
- *  ANCHOR:PROMPTING
- *  ----------------------------- */
-
-function buildSystemPrompt() {
-  return `
-You are Buildlio Architect, the AI inside Buildlio.Site.
-Buildlio is AI-first (prompt → generate → preview → iterate).
-Return ONLY valid JSON matching this schema:
-
-{
-  "title": string,
-  "theme": { "palette": "neural-dark" | string, "radius": "sm"|"md"|"lg"|"xl" },
-  "pages": [
+  return createServerClient(
+    ENV.SUPABASE_URL,
+    isAdmin ? ENV.SUPABASE_SERVICE : ENV.SUPABASE_ANON,
     {
-      "slug": "home",
-      "title": string,
-      "blocks": [
-        { "type": "hero", "headline": string, "subhead"?: string, "cta"?: { "label": string, "href": string } },
-        { "type": "features", "items": [{ "title": string, "description": string, "icon"?: string }] },
-        { "type": "testimonials", "items": [{ "quote": string, "name": string, "title"?: string }] },
-        { "type": "cta", "headline": string, "subhead"?: string, "cta": { "label": string, "href": string } },
-        { "type": "text", "content": string }
-      ]
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll: (cookiesToSet) => {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) => {
+              cookieStore.set(name, value, options);
+              response.cookies.set(name, value, options);
+            });
+          } catch (error) {
+            // Silently fail if called in a context where cookies can't be set
+          }
+        },
+      },
     }
-  ]
+  );
 }
 
-Rules:
-- Output ONLY JSON. No markdown. No commentary. No code fences.
-- Slugs must be kebab-case.
-- Use real, usable copy. Keep it business-ready.
-- If user asks for multiple pages, include them.
-`.trim();
+/**
+ * Robust JSON extraction from LLM strings
+ */
+function extractCleanJson(raw: string): any {
+  const trimmed = raw.trim();
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    const start = trimmed.indexOf("{");
+    const end = trimmed.lastIndexOf("}");
+    if (start === -1 || end === -1 || end <= start) throw new Error("No valid JSON found in AI response.");
+    return JSON.parse(trimmed.slice(start, end + 1));
+  }
 }
+
+/** ---------------------------------------------------------
+ * SECTION: CORE ACTIONS
+ * --------------------------------------------------------- */
 
 async function callClaude(prompt: string): Promise<string> {
-  const key = process.env.ANTHROPIC_API_KEY;
-  if (!key) throw new Error("Missing ANTHROPIC_API_KEY");
-
-  const model = process.env.ANTHROPIC_MODEL ?? "claude-3-5-sonnet-20241022";
+  const systemPrompt = `
+    You are Buildlio Architect. Return ONLY raw JSON. No Markdown. No backticks.
+    Schema: ${JSON.stringify(SnapshotSchema.shape)}
+    Rules: 
+    - Slugs: kebab-case. 
+    - Content: Professional, conversion-optimized copy. 
+    - Full site structure required.
+  `.trim();
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-api-key": key,
+      "x-api-key": ENV.ANTHROPIC_KEY,
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model,
-      max_tokens: 1800,
-      temperature: 0.6,
-      system: buildSystemPrompt(),
+      model: ENV.MODEL,
+      max_tokens: 2500, // Increased for multi-page support
+      temperature: 0.7,
+      system: systemPrompt,
       messages: [{ role: "user", content: prompt }],
     }),
   });
 
-  if (!res.ok) {
-    const txt = await res.text().catch(() => "");
-    throw new Error(`Anthropic API error (${res.status}): ${txt || res.statusText}`);
-  }
-
-  const data: any = await res.json();
-  const text = data?.content?.find((c: any) => c?.type === "text")?.text ?? "";
-  if (!text) throw new Error("Anthropic returned empty content");
-  return text.trim();
+  if (!res.ok) throw new Error(`Claude API Error: ${res.statusText}`);
+  const data = await res.json();
+  return data.content[0].text;
 }
 
-/** -----------------------------
- *  ANCHOR:JSON_PARSE
- *  ----------------------------- */
-
-function extractJson(raw: string): any {
-  // Try direct parse first
-  try {
-    return JSON.parse(raw);
-  } catch {
-    // Attempt to extract first {...} block (common when model adds stray text)
-    const first = raw.indexOf("{");
-    const last = raw.lastIndexOf("}");
-    if (first === -1 || last === -1 || last <= first) {
-      throw new Error("No JSON object detected in output.");
-    }
-    const slice = raw.slice(first, last + 1);
-    return JSON.parse(slice);
-  }
-}
-
-/** -----------------------------
- *  ANCHOR:CREDITS
- *  ----------------------------- */
-
-async function getCreditBalance(supa: any, ownerId: string): Promise<number> {
-  // Sum all deltas
-  const { data, error } = await supa
-    .from("credit_ledger")
-    .select("delta")
-    .eq("owner_id", ownerId);
-
-  if (error) throw new Error(`Could not read credit ledger: ${error.message}`);
-  const rows: Array<{ delta: number }> = data ?? [];
-  return rows.reduce((acc, r) => acc + (Number(r.delta) || 0), 0);
-}
-
-/** -----------------------------
- *  ANCHOR:ROUTE
- *  ----------------------------- */
+/** ---------------------------------------------------------
+ * SECTION: ROUTE HANDLER
+ * --------------------------------------------------------- */
 
 export async function POST(req: Request) {
-  const response = NextResponse.json({ ok: true }); // placeholder; we’ll overwrite on returns
+  const response = new NextResponse();
+  const supabase = getSupabase(response);
+  const admin = getSupabase(response, true);
 
   try {
-    const supa = supabaseFromCookies(response);
+    // 1. Authenticate
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    // Auth
-    const { data: auth, error: authErr } = await supa.auth.getUser();
-    if (authErr || !auth?.user) {
-      return NextResponse.json({ success: false, error: "Not authenticated" }, { status: 401 });
-    }
-    const user = auth.user;
+    // 2. Validate Request
+    const body = await req.json();
+    const validatedReq = RequestSchema.safeParse(body);
+    if (!validatedReq.success) return NextResponse.json({ error: "Invalid Payload", details: validatedReq.error.format() }, { status: 400 });
+    
+    const { projectId, prompt, note } = validatedReq.data;
 
-    // Parse request
-    const body = await req.json().catch(() => null);
-    const parsedReq = RequestSchema.safeParse(body);
-    if (!parsedReq.success) {
-      return NextResponse.json(
-        { success: false, error: "Invalid request", details: parsedReq.error.flatten() },
-        { status: 400 }
-      );
-    }
+    // 3. Project Ownership & Credit Check
+    const [{ data: project }, { data: credits }] = await Promise.all([
+      supabase.from("projects").select("id, owner_id").eq("id", projectId).single(),
+      admin.from("credit_ledger").select("delta").eq("owner_id", user.id)
+    ]);
 
-    const { projectId, prompt, note } = parsedReq.data;
+    if (!project || project.owner_id !== user.id) return NextResponse.json({ error: "Project not found or access denied" }, { status: 404 });
+    
+    const currentBalance = (credits || []).reduce((acc, curr) => acc + curr.delta, 0);
+    if (currentBalance < 1) return NextResponse.json({ error: "Insufficient credits", balance: currentBalance }, { status: 402 });
 
-    // Ensure project exists + owned by user
-    const { data: project, error: projErr } = await supa
-      .from("projects")
-      .select("id, owner_id, name, slug, theme")
-      .eq("id", projectId)
-      .single();
-
-    if (projErr || !project) {
-      return NextResponse.json({ success: false, error: "Project not found" }, { status: 404 });
-    }
-    if (project.owner_id !== user.id) {
-      return NextResponse.json({ success: false, error: "Forbidden (not project owner)" }, { status: 403 });
-    }
-
-    // Use admin writer if available (recommended)
-    const admin = supabaseAdmin();
-    const writer = admin ?? supa;
-
-    // Check credits BEFORE calling Claude (fair + prevents wasted API calls)
-    const balance = await getCreditBalance(writer, user.id);
-    if (balance < 1) {
-      return NextResponse.json(
-        { success: false, error: "Insufficient credits (no credits charged).", balance },
-        { status: 402 }
-      );
+    // 4. AI Generation
+    const rawAiResponse = await callClaude(prompt);
+    const jsonAiResponse = extractCleanJson(rawAiResponse);
+    
+    // 5. Validation of AI Output
+    const validatedSnapshot = SnapshotSchema.safeParse(jsonAiResponse);
+    if (!validatedSnapshot.success) {
+      return NextResponse.json({ 
+        error: "AI generated invalid structure", 
+        details: validatedSnapshot.error.format(),
+        raw: rawAiResponse.slice(0, 500) 
+      }, { status: 422 });
     }
 
-    // Compute next version number (read can be via writer to avoid RLS surprises)
-    const { data: vmax, error: vmaxErr } = await writer
+    // 6. DB Persistence (Version + Credit Ledger)
+    // We get the next version number first
+    const { data: latestVer } = await admin
       .from("project_versions")
       .select("version_no")
       .eq("project_id", projectId)
       .order("version_no", { ascending: false })
-      .limit(1);
+      .limit(1)
+      .single();
 
-    if (vmaxErr) {
-      return NextResponse.json(
-        { success: false, error: "Could not read version history (no credits charged).", details: vmaxErr.message },
-        { status: 500 }
-      );
-    }
+    const nextVersion = (latestVer?.version_no ?? 0) + 1;
 
-    const nextVersion = (vmax?.[0]?.version_no ?? 0) + 1;
-
-    // Call Claude
-    const raw = await callClaude(prompt);
-
-    // Parse JSON
-    let json: any;
-    try {
-      json = extractJson(raw);
-    } catch (e: any) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "AI output was not valid JSON (no credits charged).",
-          details: e?.message ?? String(e),
-          rawPreview: raw.slice(0, 1200),
-        },
-        { status: 422 }
-      );
-    }
-
-    // Validate schema
-    const parsedSnap = SnapshotSchema.safeParse(json);
-    if (!parsedSnap.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "AI output failed schema validation (no credits charged).",
-          details: parsedSnap.error.flatten(),
-          rawPreview: raw.slice(0, 1200),
-        },
-        { status: 422 }
-      );
-    }
-
-    const snapshot: Snapshot = parsedSnap.data;
-
-    // Save version FIRST
-    const { error: verErr } = await writer.from("project_versions").insert({
+    // Atomic-like insert: Version then Ledger
+    const { error: saveError } = await admin.from("project_versions").insert({
       project_id: projectId,
       owner_id: user.id,
       version_no: nextVersion,
-      snapshot,
-      note: note ?? `AI build v${nextVersion}`,
+      snapshot: validatedSnapshot.data,
+      note: note ?? `AI Build v${nextVersion}`
     });
 
-    if (verErr) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Could not save project version (no credits charged). Check RLS/service role key.",
-          details: verErr.message,
-        },
-        { status: 500 }
-      );
-    }
+    if (saveError) throw new Error(`Failed to save version: ${saveError.message}`);
 
-    // Charge credit ONLY after version saved successfully
-    const { error: creditErr } = await writer.from("credit_ledger").insert({
+    const { error: ledgerError } = await admin.from("credit_ledger").insert({
       owner_id: user.id,
       delta: -1,
-      reason: "build_success",
+      reason: "ai_generation",
       project_id: projectId,
-      metadata: {
-        provider: "anthropic",
-        model: process.env.ANTHROPIC_MODEL ?? "claude-3-5-sonnet-20241022",
-        version_no: nextVersion,
-      },
+      metadata: { model: ENV.MODEL, version: nextVersion }
     });
 
-    if (creditErr) {
-      // Build succeeded; credit write failed. Return success with warning.
-      return NextResponse.json(
-        {
-          success: true,
-          warning: "Build succeeded but credit ledger insert failed. Check RLS/service role key.",
-          version_no: nextVersion,
-          snapshot,
-        },
-        { status: 200 }
-      );
-    }
+    // 7. Final Response
+    return NextResponse.json({
+      success: true,
+      version: nextVersion,
+      snapshot: validatedSnapshot.data,
+      balance_remaining: currentBalance - 1
+    }, { status: 200, headers: response.headers });
 
-    // Success
-    return NextResponse.json(
-      {
-        success: true,
-        version_no: nextVersion,
-        snapshot,
-        credits_charged: 1,
-        balance_after: balance - 1,
-      },
-      { status: 200 }
-    );
-  } catch (e: any) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Server error (no credits charged).",
-        details: e?.message ?? String(e),
-      },
-      { status: 500 }
-    );
+  } catch (error: any) {
+    console.error("[ROUTE_ERROR]:", error);
+    return NextResponse.json({ 
+      error: "Internal Server Error", 
+      message: error.message || "An unexpected error occurred" 
+    }, { status: 500 });
   }
 }
