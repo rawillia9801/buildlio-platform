@@ -1,12 +1,11 @@
 // FILE: app/api/claude-test/route.ts
 //
 // CHANGELOG
-// - v1.2 (2026-02-20)
-//   * REFINED: Modularized architecture for better maintainability
-//   * IMPROVED: Hardened JSON extraction with boundary detection
-//   * ADDED: Detailed logging and structured error responses
-//   * OPTIMIZED: Credit balance check using a single query
-//   * FIXED: Supabase SSR client lifecycle for Next.js 14/15 compatibility
+// - v1.3 (2026-02-20)
+//   * FIX: Implemented async cookies for Next.js 16/React 19 compatibility
+//   * UPGRADE: Replaced manual multi-step DB writes with a single atomic RPC call
+//   * IMPROVE: Enhanced Claude system prompt for higher JSON reliability
+//   * ADD: Detailed error logging and header-safe response handling
 
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -28,7 +27,7 @@ const ENV = {
   MODEL: process.env.ANTHROPIC_MODEL ?? "claude-3-5-sonnet-20241022",
 };
 
-// Zod Schemas for the AI Output
+// Site Architecture Schema
 const BlockHeroSchema = z.object({
   type: z.literal("hero"),
   headline: z.string().min(1).max(140),
@@ -97,8 +96,12 @@ const RequestSchema = z.object({
  * SECTION: UTILITIES & CLIENTS
  * --------------------------------------------------------- */
 
-function getSupabase(response: NextResponse, isAdmin = false) {
-  const cookieStore = cookies();
+/**
+ * Next.js 16 requires awaiting cookies().
+ */
+async function getSupabase(response: NextResponse, isAdmin = false) {
+  const cookieStore = await cookies();
+  
   return createServerClient(
     ENV.SUPABASE_URL,
     isAdmin ? ENV.SUPABASE_SERVICE : ENV.SUPABASE_ANON,
@@ -111,8 +114,8 @@ function getSupabase(response: NextResponse, isAdmin = false) {
               cookieStore.set(name, value, options);
               response.cookies.set(name, value, options);
             });
-          } catch (error) {
-            // Silently fail if called in a context where cookies can't be set
+          } catch {
+            // Context-specific restriction (e.g. middleware)
           }
         },
       },
@@ -120,9 +123,6 @@ function getSupabase(response: NextResponse, isAdmin = false) {
   );
 }
 
-/**
- * Robust JSON extraction from LLM strings
- */
 function extractCleanJson(raw: string): any {
   const trimmed = raw.trim();
   try {
@@ -130,7 +130,9 @@ function extractCleanJson(raw: string): any {
   } catch {
     const start = trimmed.indexOf("{");
     const end = trimmed.lastIndexOf("}");
-    if (start === -1 || end === -1 || end <= start) throw new Error("No valid JSON found in AI response.");
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error("The AI response did not contain a valid JSON object.");
+    }
     return JSON.parse(trimmed.slice(start, end + 1));
   }
 }
@@ -141,12 +143,13 @@ function extractCleanJson(raw: string): any {
 
 async function callClaude(prompt: string): Promise<string> {
   const systemPrompt = `
-    You are Buildlio Architect. Return ONLY raw JSON. No Markdown. No backticks.
-    Schema: ${JSON.stringify(SnapshotSchema.shape)}
-    Rules: 
-    - Slugs: kebab-case. 
-    - Content: Professional, conversion-optimized copy. 
-    - Full site structure required.
+    You are Buildlio Architect, a world-class UI/UX engineer. 
+    Output ONLY valid, raw JSON matching the schema provided. 
+    Rules:
+    - Slugs must be kebab-case (e.g., 'about-us').
+    - Copy should be professional, compelling, and ready for production.
+    - Do not include markdown code fences or conversational text.
+    - Schema structure: ${JSON.stringify(SnapshotSchema.shape)}
   `.trim();
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -158,14 +161,18 @@ async function callClaude(prompt: string): Promise<string> {
     },
     body: JSON.stringify({
       model: ENV.MODEL,
-      max_tokens: 2500, // Increased for multi-page support
+      max_tokens: 3500, // Room for deep multi-page structures
       temperature: 0.7,
       system: systemPrompt,
       messages: [{ role: "user", content: prompt }],
     }),
   });
 
-  if (!res.ok) throw new Error(`Claude API Error: ${res.statusText}`);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Anthropic API Error (${res.status}): ${errText}`);
+  }
+
   const data = await res.json();
   return data.content[0].text;
 }
@@ -176,90 +183,103 @@ async function callClaude(prompt: string): Promise<string> {
 
 export async function POST(req: Request) {
   const response = new NextResponse();
-  const supabase = getSupabase(response);
-  const admin = getSupabase(response, true);
-
+  
   try {
-    // 1. Authenticate
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-    if (authError || !user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const supabase = await getSupabase(response);
+    const admin = await getSupabase(response, true);
 
-    // 2. Validate Request
-    const body = await req.json();
+    // 1. Authentication
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    // 2. Request Validation
+    const body = await req.json().catch(() => ({}));
     const validatedReq = RequestSchema.safeParse(body);
-    if (!validatedReq.success) return NextResponse.json({ error: "Invalid Payload", details: validatedReq.error.format() }, { status: 400 });
+    if (!validatedReq.success) {
+      return NextResponse.json({ 
+        success: false, 
+        error: "Invalid request data", 
+        details: validatedReq.error.format() 
+      }, { status: 400 });
+    }
     
     const { projectId, prompt, note } = validatedReq.data;
 
-    // 3. Project Ownership & Credit Check
-    const [{ data: project }, { data: credits }] = await Promise.all([
-      supabase.from("projects").select("id, owner_id").eq("id", projectId).single(),
-      admin.from("credit_ledger").select("delta").eq("owner_id", user.id)
-    ]);
+    // 3. Project Ownership Check
+    const { data: project, error: projErr } = await supabase
+      .from("projects")
+      .select("id, owner_id")
+      .eq("id", projectId)
+      .single();
 
-    if (!project || project.owner_id !== user.id) return NextResponse.json({ error: "Project not found or access denied" }, { status: 404 });
-    
-    const currentBalance = (credits || []).reduce((acc, curr) => acc + curr.delta, 0);
-    if (currentBalance < 1) return NextResponse.json({ error: "Insufficient credits", balance: currentBalance }, { status: 402 });
+    if (projErr || !project || project.owner_id !== user.id) {
+      return NextResponse.json({ success: false, error: "Project access denied" }, { status: 404 });
+    }
 
     // 4. AI Generation
     const rawAiResponse = await callClaude(prompt);
-    const jsonAiResponse = extractCleanJson(rawAiResponse);
+    let jsonAiResponse: any;
     
-    // 5. Validation of AI Output
-    const validatedSnapshot = SnapshotSchema.safeParse(jsonAiResponse);
-    if (!validatedSnapshot.success) {
+    try {
+      jsonAiResponse = extractCleanJson(rawAiResponse);
+    } catch (e: any) {
       return NextResponse.json({ 
-        error: "AI generated invalid structure", 
-        details: validatedSnapshot.error.format(),
-        raw: rawAiResponse.slice(0, 500) 
+        success: false, 
+        error: "AI failed to produce valid JSON", 
+        raw: rawAiResponse.slice(0, 300) 
       }, { status: 422 });
     }
 
-    // 6. DB Persistence (Version + Credit Ledger)
-    // We get the next version number first
-    const { data: latestVer } = await admin
-      .from("project_versions")
-      .select("version_no")
-      .eq("project_id", projectId)
-      .order("version_no", { ascending: false })
-      .limit(1)
-      .single();
+    // 5. Semantic Validation
+    const validatedSnapshot = SnapshotSchema.safeParse(jsonAiResponse);
+    if (!validatedSnapshot.success) {
+      return NextResponse.json({ 
+        success: false, 
+        error: "AI output failed schema validation", 
+        details: validatedSnapshot.error.format() 
+      }, { status: 422 });
+    }
 
-    const nextVersion = (latestVer?.version_no ?? 0) + 1;
-
-    // Atomic-like insert: Version then Ledger
-    const { error: saveError } = await admin.from("project_versions").insert({
-      project_id: projectId,
-      owner_id: user.id,
-      version_no: nextVersion,
-      snapshot: validatedSnapshot.data,
-      note: note ?? `AI Build v${nextVersion}`
+    // 6. Atomic DB Operation (Version + Credits) via RPC
+    const { data: rpcData, error: rpcError } = await admin.rpc('save_version_and_charge_credit', {
+      p_project_id: projectId,
+      p_owner_id: user.id,
+      p_snapshot: validatedSnapshot.data,
+      p_note: note ?? "AI Generation",
+      p_model: ENV.MODEL
     });
 
-    if (saveError) throw new Error(`Failed to save version: ${saveError.message}`);
+    if (rpcError) {
+      const isCredits = rpcError.message.toLowerCase().includes("credits");
+      return NextResponse.json({ 
+        success: false, 
+        error: rpcError.message 
+      }, { status: isCredits ? 402 : 500 });
+    }
 
-    const { error: ledgerError } = await admin.from("credit_ledger").insert({
-      owner_id: user.id,
-      delta: -1,
-      reason: "ai_generation",
-      project_id: projectId,
-      metadata: { model: ENV.MODEL, version: nextVersion }
-    });
+    // RPC returns a table/array; extract values
+    const { new_version_no, new_balance } = rpcData[0] || {};
 
-    // 7. Final Response
+    // 7. Successful Response
     return NextResponse.json({
       success: true,
-      version: nextVersion,
+      version_no: new_version_no,
       snapshot: validatedSnapshot.data,
-      balance_remaining: currentBalance - 1
-    }, { status: 200, headers: response.headers });
+      balance: new_balance,
+      credits_charged: 1
+    }, { 
+      status: 200, 
+      headers: response.headers // Ensure cookies are passed back
+    });
 
   } catch (error: any) {
-    console.error("[ROUTE_ERROR]:", error);
+    console.error("[ROUTE_CRITICAL_FAILURE]:", error);
     return NextResponse.json({ 
+      success: false, 
       error: "Internal Server Error", 
-      message: error.message || "An unexpected error occurred" 
+      message: error.message 
     }, { status: 500 });
   }
 }
