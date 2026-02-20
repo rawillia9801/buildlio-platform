@@ -1,27 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { createBrowserClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+);
 
 function getURL() {
-  // Works on Vercel + local
   if (typeof window !== "undefined") return window.location.origin;
   return process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000";
 }
-
-export default function BuilderPage() {
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  async function createProjectWithPages() {
-    setLoading(true);
-    setErr(null);
-
-    try {
-      const supabase = createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      );
 
       // 1) Ensure logged in
       const { data: authData, error: authErr } = await supabase.auth.getUser();
