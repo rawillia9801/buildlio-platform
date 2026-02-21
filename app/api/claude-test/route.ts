@@ -4,108 +4,71 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
-export const maxDuration = 60;
-
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || "" });
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
-    const messages = body.messages; 
-    const currentDbState = body.currentDbState; // The frontend will send the live DB counts
-    
+    const { projectId, messages, currentState, currentDbState } = await req.json();
     const cookieStore = await cookies();
     const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
       { cookies: { getAll: () => cookieStore.getAll(), setAll: () => {} } }
     );
 
-    const { data: authData } = await supabase.auth.getUser();
-    if (!authData?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const systemPrompt = `
-      You are the elite AI Database Administrator for Southwest Virginia Chihuahua.
-      You are DIRECTLY CONNECTED to their live Supabase project.
+      You are the Master ERP Intelligence for Southwest VA Chihuahua & HostMyWeb.
       
-      YOUR LIVE DATABASE SCHEMA:
-      1. Table: 'puppies' (Columns: id, name, status, price, description, image_url)
-      2. Table: 'buyers' (Columns: id, name, email, puppy_id, total_price, status)
-      3. Table: 'messages' (Columns: id, buyer_id, subject, body, status)
-      4. Table: 'documents' (Columns: id, buyer_id, file_name, visible_in_portal)
-      
-      CURRENT LIVE DB CONTEXT:
+      SCHEMA CONTEXT:
+      - DOG BUSINESS: Tables [puppies, buyers, litters, bp_puppies, bp_buyers, breeding_dogs].
+      - HOSTING (HostMyWeb): Tables [client_sites, domains, invoices, support_tickets].
+      - E-COMMERCE: Tables [inventory, sales, inventory_sales, transactions].
+      - PERSONAL/BILLS: Tables [bills, ops_tasks, investments_stocks].
+
+      LIVE DATA SNAPSHOT:
       ${JSON.stringify(currentDbState)}
-      
-      YOUR JOB:
-      Read the user's natural language command, and generate the EXACT Supabase operations needed to fulfill it. 
-      For example, if they say "Mark the male puppy named Bruno as reserved for John", you must output an update operation for the 'puppies' table, and an insert operation for the 'buyers' table.
-      
-      CRITICAL RULES:
-      Always respond with a single, valid JSON object. NO markdown. NO plain text outside the JSON.
-      
-      EXPECTED JSON FORMAT:
+
+      CURRENT STATE (JSON):
+      ${JSON.stringify(currentState)}
+
+      INSTRUCTIONS:
+      1. Use the LIVE DATA SNAPSHOT to answer questions. If 'puppyData' has items, DO NOT say 0.
+      2. To calculate Hosting MRR: Sum 'total' from 'invoices' or count 'active' in 'client_sites'.
+      3. To calculate E-commerce: Use the 'sales' and 'inventory' tables.
+      4. Always return the 'state' object for the 3 JSON-based tabs (ecommerce, hosting, personal).
+      5. Generate 'db_operations' for any database changes.
+
+      RETURN JSON ONLY:
       {
-        "message": "I have updated the database: Bruno is now reserved, and John has been added to the CRM.",
-        "db_operations": [
-          { "table": "puppies", "action": "update", "match": { "name": "Bruno" }, "data": { "status": "Reserved" } },
-          { "table": "buyers", "action": "insert", "data": { "name": "John", "puppy_id": "bruno-id-123", "status": "Pending Deposit" } }
-        ]
+        "message": "Direct answer to user",
+        "state": { "ecommerce": {...}, "hosting": {...}, "personal": {...} },
+        "db_operations": []
       }
     `;
 
     const msg = await anthropic.messages.create({
-      model: "claude-sonnet-4-6", 
-      max_tokens: 8000, 
+      model: "claude-3-5-sonnet-20240620", 
+      max_tokens: 4000, 
       system: systemPrompt,
       messages: messages,
     });
 
-    const textBlock = msg.content.find((c) => c.type === "text");
-    const rawJson = textBlock?.type === "text" ? textBlock.text : "{}";
-    
-    let parsedResponse;
-    const startIndex = rawJson.indexOf('{');
-    const endIndex = rawJson.lastIndexOf('}');
-    
-    if (startIndex === -1 || endIndex === -1) {
-      parsedResponse = { message: rawJson, db_operations: [] };
-    } else {
-      try {
-        parsedResponse = JSON.parse(rawJson.slice(startIndex, endIndex + 1));
-      } catch (parseErr) {
-        parsedResponse = { message: "Database compiler glitched. Please rephrase.", db_operations: [] };
+    const responseText = msg.content[0].type === 'text' ? msg.content[0].text : "";
+    const parsed = JSON.parse(responseText.substring(responseText.indexOf('{'), responseText.lastIndexOf('}') + 1));
+
+    // Execute DB Ops if generated
+    if (parsed.db_operations) {
+      for (const op of parsed.db_operations) {
+        if (op.action === "update") await supabase.from(op.table).update(op.data).match(op.match);
+        if (op.action === "insert") await supabase.from(op.table).insert(op.data);
       }
     }
 
-    // --- EXECUTE LIVE SUPABASE OPERATIONS ---
-    let operationsLog = [];
-    if (parsedResponse.db_operations && Array.isArray(parsedResponse.db_operations)) {
-      for (const op of parsedResponse.db_operations) {
-        try {
-          if (op.action === "insert") {
-            const { error } = await supabase.from(op.table).insert(op.data);
-            if (error) operationsLog.push(`Insert Error on ${op.table}: ${error.message}`);
-          } else if (op.action === "update") {
-            const { error } = await supabase.from(op.table).update(op.data).match(op.match || {});
-            if (error) operationsLog.push(`Update Error on ${op.table}: ${error.message}`);
-          }
-        } catch (e) {
-          operationsLog.push(`DB Sync Failed for ${op.table}`);
-        }
-      }
-    }
-    
-    return NextResponse.json({ 
-      success: true, 
-      data: parsedResponse,
-      logs: operationsLog
-    });
-
-  } catch (err: unknown) {
-    const errorMessage = err instanceof Error ? err.message : "Unknown error occurred";
-    return NextResponse.json({ success: false, error: errorMessage }, { status: 500 });
+    return NextResponse.json({ success: true, data: parsed });
+  } catch (err) {
+    return NextResponse.json({ success: false, error: String(err) }, { status: 500 });
   }
 }
