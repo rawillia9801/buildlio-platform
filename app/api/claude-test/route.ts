@@ -14,7 +14,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const projectId = String(body.projectId);
-    const messages = body.messages; // We now receive full chat history
+    const messages = body.messages; 
     
     const cookieStore = await cookies();
     
@@ -29,33 +29,26 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    // THE AGENTIC SYSTEM PROMPT
+    // STRICTER SYSTEM PROMPT
     const systemPrompt = `
-      You are Buildlio, a friendly, personable, and highly knowledgeable AI website architect. 
-      Your goal is to converse with the user to gather requirements for their website before building it.
+      You are Buildlio, a friendly, personable AI website architect. 
+      Converse with the user to gather requirements before building.
       
-      BEHAVIOR RULES:
-      1. Act like a highly competent consultant. If they say "dog breeder", proactively ask insightful questions about breeds, AKC/CKC registries, and health guarantees (e.g., against genetic defects, hernias).
-      2. Ask ONLY 1 or 2 focused questions at a time. Keep your tone warm, friendly, and conversational.
-      3. Once you feel you have a solid understanding of their business (usually after 2 to 4 exchanges), you will build the website.
+      CRITICAL: You MUST ALWAYS respond with a single, valid JSON object. 
+      ABSOLUTELY NO plain text outside the JSON structure. Do not say "Here is your response" or use markdown blocks.
       
-      CRITICAL JSON RESPONSE RULES:
-      You MUST ALWAYS respond with a raw JSON object (no markdown, no backticks).
-      
-      If you need more information, respond with:
+      If you need more info, respond exactly like this:
       {
         "type": "chat",
-        "message": "Your friendly conversational reply and next question here."
+        "message": "Your friendly conversational reply and question here."
       }
       
-      If you have enough information and are ready to build, respond with:
+      If you have enough info to build, respond exactly like this:
       {
         "type": "build",
         "message": "I've got everything I need! Generating your custom site now...",
         "snapshot": {
            "appName": "App Name",
-           "database": { "schema": "-- Minimal SQL here (under 5 lines)" },
-           "nextjs": { "components": [ { "filename": "page.tsx", "code": "// Code under 15 lines" } ] },
            "pages": [
              {
                "slug": "index",
@@ -73,7 +66,7 @@ export async function POST(req: Request) {
       model: "claude-sonnet-4-6", 
       max_tokens: 8000, 
       system: systemPrompt,
-      messages: messages, // Pass the entire conversation history
+      messages: messages,
     });
 
     const textBlock = msg.content.find((c) => c.type === "text");
@@ -81,10 +74,20 @@ export async function POST(req: Request) {
     
     let parsedResponse;
     try {
-      const cleaned = rawJson.replace(/```json/g, "").replace(/```/g, "").trim();
-      parsedResponse = JSON.parse(cleaned);
+      // THE FIX: Aggressive JSON string extraction
+      const startIndex = rawJson.indexOf('{');
+      const endIndex = rawJson.lastIndexOf('}');
+      
+      if (startIndex === -1 || endIndex === -1) {
+        throw new Error("No JSON structure found in response.");
+      }
+      
+      const cleanJson = rawJson.slice(startIndex, endIndex + 1);
+      parsedResponse = JSON.parse(cleanJson);
+      
     } catch (parseErr) {
-      return NextResponse.json({ success: false, error: "Failed to parse AI response." }, { status: 500 });
+      console.error("Failed AI Output:", rawJson); // Logs to Vercel so you can see what broke it
+      return NextResponse.json({ success: false, error: "Failed to parse AI response. Try sending your message again." }, { status: 500 });
     }
 
     // ONLY charge credits and save to DB if the AI decided to BUILD the site
