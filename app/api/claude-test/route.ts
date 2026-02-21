@@ -8,7 +8,9 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 export async function POST(req: Request) {
   const { projectId, prompt } = await req.json();
   const cookieStore = await cookies();
-  
+  export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 60; // <--- ADD THIS LINE (Allows up to 60 seconds)
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
