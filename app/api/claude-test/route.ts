@@ -14,7 +14,7 @@ export async function POST(req: Request) {
   try {
     const body = await req.json();
     const projectId = String(body.projectId);
-    const prompt = String(body.prompt);
+    const messages = body.messages; // We now receive full chat history
     
     const cookieStore = await cookies();
     
@@ -29,68 +29,80 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    // SYSTEM PROMPT: Forces speed to beat Vercel's timer
+    // THE AGENTIC SYSTEM PROMPT
     const systemPrompt = `
-      You are an elite Next.js and Supabase architect.
+      You are Buildlio, a friendly, personable, and highly knowledgeable AI website architect. 
+      Your goal is to converse with the user to gather requirements for their website before building it.
       
-      CRITICAL RULES TO PREVENT TIMEOUTS:
-      1. You must keep the database and nextjs sections extremely brief. 
-      2. "nextjs.components[0].code" MUST be under 15 lines. Use placeholders like "// Component logic..."
-      3. "database.schema" MUST be under 5 lines.
-      4. Make the "pages" array detailed for the UI preview, but cap it at 4 blocks total.
+      BEHAVIOR RULES:
+      1. Act like a highly competent consultant. If they say "dog breeder", proactively ask insightful questions about breeds, AKC/CKC registries, and health guarantees (e.g., against genetic defects, hernias).
+      2. Ask ONLY 1 or 2 focused questions at a time. Keep your tone warm, friendly, and conversational.
+      3. Once you feel you have a solid understanding of their business (usually after 2 to 4 exchanges), you will build the website.
       
-      Output ONLY raw, valid JSON. No markdown.
+      CRITICAL JSON RESPONSE RULES:
+      You MUST ALWAYS respond with a raw JSON object (no markdown, no backticks).
+      
+      If you need more information, respond with:
       {
-        "appName": "App Name",
-        "database": { "schema": "-- SQL here" },
-        "nextjs": {
-          "components": [ { "filename": "page.tsx", "code": "// Code here" } ]
-        },
-        "pages": [
-          {
-            "slug": "index",
-            "blocks": [
-              { "type": "hero", "headline": "Title", "subhead": "Sub" },
-              { "type": "features", "items": [{ "title": "Feat", "description": "Desc" }] }
-            ]
-          }
-        ]
+        "type": "chat",
+        "message": "Your friendly conversational reply and next question here."
+      }
+      
+      If you have enough information and are ready to build, respond with:
+      {
+        "type": "build",
+        "message": "I've got everything I need! Generating your custom site now...",
+        "snapshot": {
+           "appName": "App Name",
+           "database": { "schema": "-- Minimal SQL here (under 5 lines)" },
+           "nextjs": { "components": [ { "filename": "page.tsx", "code": "// Code under 15 lines" } ] },
+           "pages": [
+             {
+               "slug": "index",
+               "blocks": [
+                 { "type": "hero", "headline": "Title", "subhead": "Sub" },
+                 { "type": "features", "items": [{ "title": "Feat", "description": "Desc" }] }
+               ]
+             }
+           ]
+        }
       }
     `;
 
-    // High token ceiling so it doesn't truncate, but prompt forces it to be fast
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6", 
       max_tokens: 8000, 
       system: systemPrompt,
-      messages: [{ role: "user", content: prompt }],
+      messages: messages, // Pass the entire conversation history
     });
 
-    // Safely extract text for TypeScript
     const textBlock = msg.content.find((c) => c.type === "text");
     const rawJson = textBlock?.type === "text" ? textBlock.text : "{}";
     
-    let snapshot;
+    let parsedResponse;
     try {
-      snapshot = JSON.parse(rawJson);
-    } catch (parseErr) {
       const cleaned = rawJson.replace(/```json/g, "").replace(/```/g, "").trim();
-      snapshot = JSON.parse(cleaned);
+      parsedResponse = JSON.parse(cleaned);
+    } catch (parseErr) {
+      return NextResponse.json({ success: false, error: "Failed to parse AI response." }, { status: 500 });
     }
 
-    const { error: rpcError } = await supabase.rpc("save_version_and_charge_credit", {
-      p_project_id: projectId,
-      p_owner_id: authData.user.id,
-      p_snapshot: snapshot,
-      p_note: "Next.js + Supabase Build",
-      p_model: "claude-sonnet-4-6"
-    });
+    // ONLY charge credits and save to DB if the AI decided to BUILD the site
+    if (parsedResponse.type === "build") {
+      const { error: rpcError } = await supabase.rpc("save_version_and_charge_credit", {
+        p_project_id: projectId,
+        p_owner_id: authData.user.id,
+        p_snapshot: parsedResponse.snapshot,
+        p_note: "Agentic Chat Build",
+        p_model: "claude-sonnet-4-6"
+      });
 
-    if (rpcError) {
-      return NextResponse.json({ success: false, error: rpcError.message }, { status: 500 });
+      if (rpcError) {
+        return NextResponse.json({ success: false, error: rpcError.message }, { status: 500 });
+      }
     }
     
-    return NextResponse.json({ success: true, snapshot });
+    return NextResponse.json({ success: true, data: parsedResponse });
 
   } catch (err: unknown) {
     const errorMessage = err instanceof Error ? err.message : "Unknown error occurred";
