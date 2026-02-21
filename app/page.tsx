@@ -1,314 +1,285 @@
 /* FILE: app/page.tsx
-   Buildlio Platform — v2.1: FULL UI + ROBUST ERROR HANDLING
+   Buildlio Platform — v3.0: FULL-STACK ARCHITECT + TERMINAL
 */
 
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useRef } from "react";
 import { Inter, Fira_Code } from "next/font/google";
 import { createBrowserClient } from "@supabase/ssr";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
 const fira = Fira_Code({ subsets: ["latin"], variable: "--font-fira", display: "swap" });
 
-type PageId = "builder" | "pricing" | "faq" | "contact" | "login" | "payment";
+type PageId = "builder" | "pricing" | "faq" | "contact" | "login";
+type ViewTab = "preview" | "code" | "database";
 
 export default function Home() {
   const [page, setPage] = useState<PageId>("builder");
+  const [viewTab, setViewTab] = useState<ViewTab>("preview");
 
-  // Supabase Browser Client
-  const supabase = useMemo(() => {
-    return createBrowserClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-  }, []);
+  const supabase = useMemo(() => createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  ), []);
 
-  // Auth/session UI state
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-  const [authBusy, setAuthBusy] = useState(false);
-  const [authError, setAuthError] = useState("");
   const [whoami, setWhoami] = useState<{ email?: string; id?: string } | null>(null);
 
-  // Builder & History state
   const [projectId, setProjectId] = useState<string>("");
   const [promptText, setPromptText] = useState<string>("");
   const [isRunning, setIsRunning] = useState(false);
   const [lastResult, setLastResult] = useState<any>(null);
-  const [lastError, setLastError] = useState<string>("");
   const [history, setHistory] = useState<any[]>([]);
-  const [loadingHistory, setLoadingHistory] = useState(false);
+  
+  // Terminal Status State
+  const [statusLogs, setStatusLogs] = useState<string[]>([]);
+  const terminalEndRef = useRef<HTMLDivElement>(null);
 
-  const nav = useMemo(
-    () => [
-      { id: "builder" as const, label: "Builder" },
-      { id: "pricing" as const, label: "Pricing" },
-      { id: "faq" as const, label: "FAQ" },
-      { id: "contact" as const, label: "Contact" },
-    ],
-    []
-  );
-
-  // REAL-TIME AUTH LISTENER
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
-      const u = data?.user;
-      setWhoami(u ? { email: u.email ?? undefined, id: u.id } : null);
+      setWhoami(data?.user ? { email: data.user.email ?? undefined, id: data.user.id } : null);
     });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      const u = session?.user;
-      setWhoami(u ? { email: u.email ?? undefined, id: u.id } : null);
-      if (event === "SIGNED_IN") setPage("builder");
-      if (event === "SIGNED_OUT") {
-        setWhoami(null);
-        setProjectId("");
-        setHistory([]);
-      }
-    });
-
-    return () => subscription.unsubscribe();
   }, [supabase]);
 
-  // HISTORY LISTENER
   useEffect(() => {
     async function fetchHistory() {
       if (!projectId || !supabase) return;
-      setLoadingHistory(true);
-      const { data, error } = await supabase
-        .from("versions")
-        .select("*")
-        .eq("project_id", projectId)
-        .order("version_no", { ascending: false });
-
-      if (!error) setHistory(data || []);
-      setLoadingHistory(false);
+      const { data } = await supabase.from("versions").select("*").eq("project_id", projectId).order("version_no", { ascending: false });
+      if (data) setHistory(data);
     }
     fetchHistory();
   }, [projectId, supabase, lastResult]);
 
-  function router(next: PageId) { setPage(next); }
-
-  const navActive = (id: PageId) => id === page ? "text-cyan-300 bg-cyan-500/10" : "text-slate-400 hover:text-white hover:bg-white/5";
-
-  async function signInWithEmailPassword() {
-    setAuthError("");
-    if (!loginEmail.trim() || !loginPassword) { setAuthError("Enter email + password."); return; }
-    setAuthBusy(true);
-    try {
-      const { error } = await supabase.auth.signInWithPassword({ email: loginEmail.trim(), password: loginPassword });
-      if (error) throw error;
-    } catch (e: any) { setAuthError(e?.message || "Login failed."); } 
-    finally { setAuthBusy(false); }
-  }
-
-  async function signOut() {
-    setAuthError("");
-    await supabase.auth.signOut();
-    router("builder");
-  }
+  // Auto-scroll terminal
+  useEffect(() => {
+    terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [statusLogs]);
 
   async function ensureProjectId(): Promise<string> {
     if (projectId.trim()) return projectId.trim();
     const { data: userRes } = await supabase.auth.getUser();
-    const user = userRes?.user;
-    if (!user) throw new Error("You must be logged in to create a project.");
-
-    const newProject = {
-      owner_id: user.id,
-      name: "Untitled Project",
-      slug: `project-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-    };
-
-    const { data: created, error: createErr } = await supabase.from("projects").insert(newProject).select("id").single();
-    if (createErr) throw createErr;
-    
+    if (!userRes?.user) throw new Error("Please log in first.");
+    const { data: created, error } = await supabase.from("projects").insert({ 
+      owner_id: userRes.user.id, name: "NextJS App", slug: `app-${Date.now()}` 
+    }).select("id").single();
+    if (error) throw error;
     setProjectId(created.id);
-    return created.id as string;
+    return created.id;
   }
 
-  // UPDATED ROBUST BUILD FUNCTION
-  async function runArchitectBuild() {
-    setLastError("");
-    setLastResult(null);
-    const trimmedPrompt = promptText.trim();
-    if (!trimmedPrompt) { setLastError("Type a prompt first."); return; }
+  function addLog(msg: string) {
+    setStatusLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
+  }
 
+  async function runArchitectBuild() {
+    if (!promptText.trim()) return addLog("ERROR: Prompt is empty.");
+    
     setIsRunning(true);
+    setStatusLogs([]);
+    setLastResult(null);
+    setViewTab("preview");
+
     try {
+      addLog("Initializing Buildlio Neural Engine...");
       const pid = await ensureProjectId();
+      addLog(`Linked to Project ID: ${pid.split('-')[0]}...`);
+      
+      // Fake progress messages to make it feel high-tech
+      const messages = [
+        "Analyzing requirements for Next.js App Router...",
+        "Designing Supabase PostgreSQL schema...",
+        "Generating React components and Tailwind UI...",
+        "Compiling production-ready assets...",
+        "Awaiting final AI handshake..."
+      ];
+      
+      let i = 0;
+      const interval = setInterval(() => {
+        if (i < messages.length) { addLog(messages[i]); i++; }
+      }, 3500);
+
       const res = await fetch("/api/claude-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: pid, prompt: trimmedPrompt }),
+        body: JSON.stringify({ projectId: pid, prompt: promptText.trim() }),
       });
 
-      // --- THE FIX: Read as text first to catch crashes & timeouts ---
+      clearInterval(interval);
       const textResponse = await res.text();
       let data;
-      try {
-        data = JSON.parse(textResponse);
-      } catch (parseError) {
-        // If it's not JSON, we throw the actual text (or state that it timed out)
-        if (res.status === 504) {
-          throw new Error("Vercel Timeout (504): Claude took too long to generate the site.");
-        }
-        throw new Error(`Server Error (${res.status}): ${textResponse.slice(0, 150) || "Empty Response"}`);
-      }
-      // -------------------------------------------------------------
+      try { data = JSON.parse(textResponse); } 
+      catch { throw new Error(`Server Error: ${textResponse.slice(0, 50)}...`); }
 
-      if (!res.ok || data?.success === false) throw new Error(data?.error || "Request failed.");
+      if (!res.ok || data?.success === false) throw new Error(data?.error || "Build failed.");
       
+      addLog("SUCCESS: Application built and deployed to Canvas.");
       setLastResult(data);
     } catch (e: any) {
-      setLastError(e?.message || "Unknown error occurred.");
+      addLog(`CRITICAL ERROR: ${e.message}`);
     } finally {
       setIsRunning(false);
     }
   }
 
   return (
-    <div className={`${inter.variable} ${fira.variable} h-screen overflow-hidden`}>
+    <div className={`${inter.variable} ${fira.variable} h-screen overflow-hidden bg-[#050505] text-[#cbd5e1]`}>
       <style jsx global>{`
-        :root { --deep: #0b0c15; --panel: #151725; --primary: #6366f1; --accent: #06b6d4; }
-        html, body { height: 100%; background: var(--deep); color: #cbd5e1; font-family: var(--font-inter), sans-serif; }
-        .glass-card { background: rgba(30, 41, 59, 0.4); backdrop-filter: blur(10px); border: 1px solid rgba(255, 255, 255, 0.05); transition: all 0.3s ease; }
-        .glass-card:hover { border-color: rgba(6, 182, 212, 0.3); }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: #0b0c15; }
-        ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+        :root { --deep: #050505; --panel: #0a0a0f; }
+        html, body { font-family: var(--font-inter), sans-serif; }
+        .glass-panel { background: #0a0a0f; border: 1px solid rgba(255, 255, 255, 0.05); }
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #334155; }
       `}</style>
 
       <div className="h-screen flex flex-col overflow-hidden">
-        {/* TOP NAVIGATION */}
-        <nav className="h-16 shrink-0 z-50 border-b border-slate-800/80 bg-[rgba(21,23,37,0.7)] backdrop-blur-[16px]">
-          <div className="h-full px-6 flex items-center justify-between">
-            <div className="flex items-center gap-8">
-              <button onClick={() => router("builder")} className="flex items-center gap-3 select-none">
-                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-cyan-400 flex items-center justify-center">
-                  <span className="text-white text-[12px] font-black">⬡</span>
-                </div>
-                <span className="font-extrabold text-xl text-white tracking-tight">build<span className="text-cyan-300">lio</span>.site</span>
-              </button>
-              <div className="hidden md:flex items-center gap-1">
-                {nav.map((n) => (
-                  <button key={n.id} onClick={() => router(n.id)} className={`px-4 py-2 rounded-lg text-sm font-medium transition ${navActive(n.id)}`}>{n.label}</button>
-                ))}
-              </div>
+        {/* TOP NAV */}
+        <nav className="h-14 shrink-0 border-b border-white/5 bg-[#0a0a0f] flex items-center justify-between px-6 z-50">
+          <div className="flex items-center gap-6">
+            <span className="font-black text-lg text-white tracking-tight flex items-center gap-2">
+              <div className="w-6 h-6 rounded bg-cyan-500 flex items-center justify-center text-black text-[10px]">⬡</div>
+              buildlio<span className="text-cyan-500">.ai</span>
+            </span>
+            <div className="hidden md:flex gap-4">
+              <button onClick={() => setPage("builder")} className={`text-xs font-bold ${page === 'builder' ? 'text-cyan-400' : 'text-slate-500 hover:text-white'}`}>WORKSPACE</button>
             </div>
-
-            <div className="flex items-center gap-3">
-              <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-800 bg-black/20">
-                <span className={`text-xs ${whoami?.email ? "text-emerald-300" : "text-slate-400"}`}>{whoami?.email ? "Signed in" : "Guest"}</span>
-                <span className="text-xs text-slate-300 max-w-[220px] truncate">{whoami?.email || "Not logged in"}</span>
-              </div>
-              {whoami?.email ? (
-                <button onClick={signOut} className="text-sm font-medium text-slate-400 hover:text-white transition">Sign Out</button>
-              ) : (
-                <button onClick={() => router("login")} className="text-sm font-medium text-slate-400 hover:text-white transition">Log In</button>
-              )}
-              <button onClick={() => router("pricing")} className="bg-white text-black px-4 py-2 rounded-lg text-sm font-extrabold hover:bg-gray-200 transition">Get Started</button>
-            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <span className="text-xs text-slate-500">{whoami?.email || "Offline Mode"}</span>
+            {whoami ? <button onClick={() => supabase.auth.signOut()} className="text-xs border border-white/10 px-3 py-1 rounded">Logout</button> : <button onClick={() => setPage("login")} className="text-xs border border-white/10 px-3 py-1 rounded">Login</button>}
           </div>
         </nav>
 
-        {/* APP CONTAINER */}
-        <div className="flex-1 relative overflow-hidden bg-[#0b0c15]">
+        <div className="flex-1 relative overflow-hidden">
           {page === "builder" && (
             <div className="h-full w-full flex flex-row">
               
-              {/* LEFT SIDEBAR */}
-              <section className="w-full md:w-[400px] lg:w-[450px] flex flex-col border-r border-slate-800/80 bg-[#151725] z-10 shadow-2xl">
-                <div className="p-4 border-b border-slate-800/80 bg-[#0b0c15]/50 shrink-0">
-                  <h2 className="text-sm font-semibold text-white flex items-center gap-2"><span className="text-cyan-300">✦</span> Architect AI</h2>
-                  <p className="text-xs text-slate-500 mt-1">Describe your vision. I write the code.</p>
-                </div>
+              {/* LEFT SIDEBAR: TERMINAL & CONTROLS */}
+              <section className="w-[450px] flex flex-col border-r border-white/5 glass-panel z-10 shadow-2xl">
                 
-                <div className="flex-1 overflow-y-auto p-4 space-y-6">
-                  <div className="glass-card rounded-2xl p-4 space-y-3">
-                    <div className="text-xs text-slate-500 font-mono">PROJECT</div>
-                    <div className="space-y-2">
-                      <label className="text-xs text-slate-400">Project ID</label>
-                      <input value={projectId} onChange={(e) => setProjectId(e.target.value)} placeholder="Leave blank to auto-create" className="w-full rounded-lg px-3 py-2 bg-slate-950/40 border border-slate-700/60 text-white focus:border-cyan-400 text-sm font-mono" />
-                      <button onClick={async () => { try { await ensureProjectId(); } catch(e:any) { setLastError(e.message); } }} className="w-full px-3 py-2 rounded-lg border border-slate-700 text-slate-200 hover:bg-white/5 transition text-xs font-semibold">Force Project Link</button>
-                    </div>
+                {/* PROMPT INPUT */}
+                <div className="p-5 border-b border-white/5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-xs font-bold text-white uppercase tracking-widest">Next.js Architect</h2>
+                    <span className="text-[10px] text-emerald-400 font-mono flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span> SYSTEM ONLINE</span>
                   </div>
-
-                  <div className="glass-card rounded-2xl p-4 space-y-3">
-                    <div className="text-xs text-slate-500 font-mono">VERSION HISTORY</div>
-                    {loadingHistory ? (
-                      <div className="text-xs text-slate-500 animate-pulse">Loading logs...</div>
-                    ) : history.length === 0 ? (
-                      <div className="text-xs text-slate-600 italic">No builds found yet.</div>
-                    ) : (
-                      <div className="space-y-2 max-h-48 overflow-y-auto pr-2">
-                        {history.map((v) => (
-                          <button key={v.id} onClick={() => setLastResult({ success: true, snapshot: v.snapshot })} className="w-full text-left p-2 rounded-lg bg-slate-950/30 border border-slate-800 hover:border-cyan-500/50 transition group">
-                            <div className="flex justify-between items-center">
-                              <span className="text-xs font-bold text-cyan-400">v{v.version_no}</span>
-                              <span className="text-[10px] text-slate-500">{new Date(v.created_at).toLocaleTimeString()}</span>
-                            </div>
-                            <div className="text-[11px] text-slate-300 truncate mt-1 group-hover:text-white">AI Generation</div>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  {lastError && <div className="glass-card rounded-2xl p-4 border border-red-500/20 text-sm text-red-300">{lastError}</div>}
+                  <textarea className="w-full bg-[#050505] border border-white/10 text-white text-sm rounded-lg px-4 py-3 focus:border-cyan-500 outline-none resize-none h-28 transition-all" placeholder="Describe the full-stack application you want to build..." value={promptText} onChange={(e) => setPromptText(e.target.value)} disabled={isRunning} />
+                  <button className={`w-full py-3 rounded-lg font-black text-sm uppercase tracking-wider transition-all ${isRunning ? "bg-cyan-900/30 text-cyan-500 border border-cyan-500/30" : "bg-cyan-500 text-black hover:bg-cyan-400 hover:shadow-[0_0_20px_rgba(6,182,212,0.4)]"}`} onClick={runArchitectBuild} disabled={isRunning}>{isRunning ? "Compiling..." : "Initialize Build"}</button>
                 </div>
 
-                <div className="p-4 border-t border-slate-800/80 bg-[#0b0c15]/90 shrink-0 space-y-3">
-                  <textarea className="w-full bg-slate-900/90 border border-slate-700 text-slate-200 text-sm rounded-xl px-4 py-3 focus:border-cyan-400 resize-none h-20" placeholder="Type instructions... (e.g. a pet shop)" value={promptText} onChange={(e) => setPromptText(e.target.value)} disabled={isRunning} />
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-xs text-slate-500 font-mono">POST /api/claude-test</div>
-                    <button className={`px-4 py-2 rounded-xl font-extrabold text-sm flex items-center gap-2 ${isRunning ? "bg-cyan-400/20 text-cyan-200" : "bg-cyan-400 text-[#0b0c15] hover:bg-cyan-300 shadow-lg"}`} onClick={runArchitectBuild} disabled={isRunning}>{isRunning ? "Running…" : "Run Build"} <span>➤</span></button>
+                {/* LIVE TERMINAL */}
+                <div className="flex-1 flex flex-col min-h-0 bg-[#020202]">
+                  <div className="px-5 py-2 border-b border-white/5 text-[10px] font-mono text-slate-500 uppercase tracking-widest bg-[#0a0a0f]">Build Terminal</div>
+                  <div className="flex-1 overflow-y-auto p-5 font-mono text-[11px] leading-relaxed space-y-1">
+                    {statusLogs.length === 0 ? (
+                      <div className="text-slate-600 italic">Waiting for instructions...</div>
+                    ) : (
+                      statusLogs.map((log, i) => (
+                        <div key={i} className={`${log.includes('ERROR') ? 'text-red-400' : log.includes('SUCCESS') ? 'text-emerald-400' : 'text-cyan-300/80'}`}>
+                          {log}
+                        </div>
+                      ))
+                    )}
+                    <div ref={terminalEndRef} />
                   </div>
+                </div>
+
+                {/* PROJECT SETTINGS */}
+                <div className="p-5 border-t border-white/5 bg-[#0a0a0f] space-y-2">
+                  <p className="text-[10px] font-bold text-slate-500 uppercase">Target Project ID</p>
+                  <input value={projectId} onChange={(e) => setProjectId(e.target.value)} className="w-full bg-[#050505] border border-white/10 rounded px-3 py-2 text-xs font-mono focus:border-cyan-500 outline-none" placeholder="Auto-generates if empty" />
                 </div>
               </section>
 
-              {/* RIGHT CANVAS */}
-              <section className="flex-1 bg-black relative flex flex-col">
-                <div className="h-12 border-b border-slate-800/80 bg-[#151725] flex items-center justify-between px-4 z-10">
-                  <div className="flex items-center gap-2 text-slate-500 text-xs font-mono">🔒 preview.buildlio.site</div>
+              {/* RIGHT CANVAS: TABS & RENDERER */}
+              <section className="flex-1 relative flex flex-col bg-[#050505]">
+                
+                {/* CANVAS TABS */}
+                <div className="h-12 border-b border-white/5 bg-[#0a0a0f] flex items-center px-4 gap-2 z-10">
+                  <button onClick={() => setViewTab("preview")} className={`px-4 py-1.5 rounded text-xs font-bold transition-all ${viewTab === 'preview' ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white'}`}>Visual Preview</button>
+                  <button onClick={() => setViewTab("code")} className={`px-4 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-2 ${viewTab === 'code' ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white'}`}>Next.js Code <span className="text-[9px] bg-indigo-500/20 text-indigo-300 px-1.5 rounded">TSX</span></button>
+                  <button onClick={() => setViewTab("database")} className={`px-4 py-1.5 rounded text-xs font-bold transition-all flex items-center gap-2 ${viewTab === 'database' ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white'}`}>Supabase <span className="text-[9px] bg-emerald-500/20 text-emerald-300 px-1.5 rounded">SQL</span></button>
                 </div>
                 
                 <div className="flex-1 overflow-y-auto relative">
                   {!lastResult?.snapshot ? (
-                    <div className="absolute inset-0 flex items-center justify-center bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:20px_20px]">
-                      <div className="text-center text-slate-500/70">
-                        <div className="text-6xl mb-4">⬡</div>
-                        <p className="text-sm">Canvas Empty</p>
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-[radial-gradient(#ffffff0a_1px,transparent_1px)] [background-size:24px_24px]">
+                      <div className="w-16 h-16 rounded-2xl border border-white/10 flex items-center justify-center mb-4 bg-[#0a0a0f] shadow-2xl">
+                        <span className="text-2xl opacity-50">⬡</span>
                       </div>
+                      <p className="text-sm font-bold text-slate-400">Canvas Empty</p>
+                      <p className="text-xs text-slate-600 mt-2 max-w-xs text-center">Initialize a build to generate your Next.js frontend and Supabase backend.</p>
                     </div>
                   ) : (
-                    <div className="min-h-full bg-white text-slate-900 animate-in fade-in duration-700 shadow-2xl">
-                      {lastResult.snapshot.pages?.[0]?.blocks?.map((block: any, i: number) => (
-                        <div key={i} className="border-b border-slate-200 last:border-0">
-                          {block.type === 'hero' && (
-                            <div className="py-24 px-10 text-center bg-slate-50">
-                              <h1 className="text-5xl md:text-6xl font-black tracking-tight text-slate-900">{block.headline}</h1>
-                              <p className="text-xl text-slate-600 mt-6 max-w-2xl mx-auto">{block.subhead}</p>
-                            </div>
-                          )}
-                          {block.type === 'features' && (
-                            <div className="py-20 px-10 max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
-                              {block.items?.map((item: any, j: number) => (
-                                <div key={j} className="p-8 border border-slate-200 rounded-3xl shadow-sm hover:shadow-md transition bg-white">
-                                  <h3 className="text-xl font-bold mb-3 text-slate-900">{item.title}</h3>
-                                  <p className="text-slate-600 leading-relaxed">{item.description}</p>
+                    <div className="h-full bg-white text-slate-900 animate-in fade-in duration-500">
+                      
+                      {/* VIEW: VISUAL PREVIEW */}
+                      {viewTab === "preview" && (
+                        <div className="min-h-full">
+                          {lastResult.snapshot.pages?.[0]?.blocks?.map((block: any, i: number) => (
+                            <div key={i} className="border-b border-slate-100 last:border-0">
+                              {block.type === 'hero' && (
+                                <div className="py-32 px-10 text-center bg-gradient-to-b from-slate-50 to-white">
+                                  <h1 className="text-5xl md:text-7xl font-black tracking-tight text-slate-900">{block.headline}</h1>
+                                  <p className="text-xl text-slate-500 mt-6 max-w-2xl mx-auto">{block.subhead}</p>
+                                  <button className="mt-10 bg-slate-900 text-white px-8 py-4 rounded-full font-bold shadow-xl hover:scale-105 transition-transform">Get Started</button>
                                 </div>
-                              ))}
+                              )}
+                              {block.type === 'features' && (
+                                <div className="py-24 px-10 max-w-7xl mx-auto">
+                                  <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
+                                    {block.items?.map((item: any, j: number) => (
+                                      <div key={j} className="p-8 rounded-3xl bg-white border border-slate-100 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:-translate-y-1 transition-transform">
+                                        <div className="w-12 h-12 bg-indigo-50 rounded-xl mb-6 flex items-center justify-center text-indigo-500 font-bold">★</div>
+                                        <h3 className="text-xl font-bold mb-3 text-slate-900">{item.title}</h3>
+                                        <p className="text-slate-500 leading-relaxed">{item.description}</p>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              )}
+                              {block.type === 'text' && (
+                                <div className="max-w-3xl mx-auto py-20 px-10 prose prose-lg prose-slate">
+                                  {block.content}
+                                </div>
+                              )}
                             </div>
-                          )}
-                          {block.type === 'text' && (
-                            <div className="max-w-3xl mx-auto py-16 px-10 prose prose-lg prose-slate">
-                              {block.content}
-                            </div>
-                          )}
+                          ))}
                         </div>
-                      ))}
+                      )}
+
+                      {/* VIEW: NEXT.JS CODE */}
+                      {viewTab === "code" && (
+                        <div className="min-h-full bg-[#0a0a0f] p-8">
+                          <div className="max-w-5xl mx-auto space-y-8">
+                            {lastResult.snapshot.nextjs?.components?.map((comp: any, i: number) => (
+                              <div key={i} className="rounded-xl border border-white/10 overflow-hidden bg-[#050505]">
+                                <div className="px-4 py-2 border-b border-white/10 bg-[#0a0a0f] text-xs font-mono text-cyan-400 flex items-center gap-2">📄 {comp.filename}</div>
+                                <pre className="p-6 text-xs font-mono text-slate-300 overflow-x-auto">
+                                  <code>{comp.code}</code>
+                                </pre>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* VIEW: SUPABASE SQL */}
+                      {viewTab === "database" && (
+                        <div className="min-h-full bg-[#0a0a0f] p-8">
+                          <div className="max-w-5xl mx-auto">
+                            <div className="rounded-xl border border-white/10 overflow-hidden bg-[#050505]">
+                              <div className="px-4 py-2 border-b border-white/10 bg-[#0a0a0f] text-xs font-mono text-emerald-400 flex items-center gap-2">🗄️ schema.sql</div>
+                              <pre className="p-6 text-xs font-mono text-slate-300 overflow-x-auto">
+                                <code>{lastResult.snapshot.database?.schema || "-- No database schema required for this project."}</code>
+                              </pre>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
                     </div>
                   )}
                 </div>
@@ -316,26 +287,18 @@ export default function Home() {
             </div>
           )}
 
-          {/* Login and other pages remain intact... */}
+          {/* LOGIN PAGE */}
           {page === "login" && (
-            <div className="h-full w-full flex items-center justify-center p-6 bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:20px_20px]">
-              <div className="glass-card w-full max-w-md rounded-2xl p-8 shadow-2xl">
-                <h2 className="text-2xl font-extrabold text-white text-center mb-8">Welcome Back</h2>
-                {authError && <div className="text-sm text-red-300 bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4">{authError}</div>}
+            <div className="h-full flex flex-col items-center justify-center p-6 bg-[radial-gradient(#ffffff0a_1px,transparent_1px)] [background-size:24px_24px]">
+              <div className="glass-panel w-full max-w-sm rounded-2xl p-8 shadow-2xl border-white/10">
+                <h2 className="text-xl font-bold text-white text-center mb-6">System Access</h2>
                 <div className="space-y-4">
-                  <input type="email" className="w-full rounded-lg px-4 py-3 bg-slate-950/40 border border-slate-700 text-white" placeholder="Email" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} />
-                  <input type="password" className="w-full rounded-lg px-4 py-3 bg-slate-950/40 border border-slate-700 text-white" placeholder="Password" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} />
-                  <button onClick={signInWithEmailPassword} className="w-full bg-cyan-400 text-[#0b0c15] font-extrabold py-3 rounded-lg" disabled={authBusy}>{authBusy ? "Signing In…" : "Sign In"}</button>
-                  <button onClick={() => setPage("builder")} className="w-full text-xs text-slate-500 hover:text-slate-300 mt-2">← Back to Builder</button>
+                  <input type="email" placeholder="Admin Email" className="w-full bg-[#050505] border border-white/10 text-white text-sm rounded-lg px-4 py-3 focus:border-cyan-500 outline-none" onChange={(e) => setLoginEmail(e.target.value)} />
+                  <input type="password" placeholder="Password" className="w-full bg-[#050505] border border-white/10 text-white text-sm rounded-lg px-4 py-3 focus:border-cyan-500 outline-none" onChange={(e) => setLoginPassword(e.target.value)} />
+                  <button onClick={async () => { await supabase.auth.signInWithPassword({ email: loginEmail, password: loginPassword }); setPage("builder"); }} className="w-full bg-cyan-500 text-black font-bold py-3 rounded-lg text-sm">Authenticate</button>
                 </div>
               </div>
             </div>
-          )}
-
-          {["pricing", "faq", "contact", "payment"].includes(page) && (
-             <div className="h-full w-full flex items-center justify-center text-white text-center bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:20px_20px]">
-                <div><h2 className="text-4xl font-black capitalize mb-4">{page}</h2><button onClick={() => setPage("builder")} className="text-cyan-300 underline font-bold">Return to Builder</button></div>
-             </div>
           )}
         </div>
       </div>

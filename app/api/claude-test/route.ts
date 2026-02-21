@@ -24,17 +24,44 @@ export async function POST(req: Request) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
-    // --- THE FIX: Pointing to the active Claude Sonnet 4.6 model ---
+    // --- THE NEXT.JS + SUPABASE SYSTEM PROMPT ---
+    const systemPrompt = `
+      You are an elite Next.js and Supabase full-stack engineer. 
+      The user wants a high-end, modern web application.
+      
+      Output ONLY a raw, valid JSON object with NO markdown formatting. It must match this exact structure:
+      {
+        "appName": "Name of the App",
+        "database": {
+          "schema": "Write the raw Supabase PostgreSQL code here to create the necessary tables and RLS policies."
+        },
+        "nextjs": {
+          "components": [
+            { "filename": "page.tsx", "code": "Write the high-end Next.js React/Tailwind code here." }
+          ]
+        },
+        "pages": [
+          {
+            "slug": "index",
+            "blocks": [
+              { "type": "hero", "headline": "High-impact title", "subhead": "Compelling subtitle", "theme": "dark" },
+              { "type": "features", "items": [{ "title": "Feature 1", "description": "Detail" }] },
+              { "type": "text", "content": "Detailed text content" }
+            ]
+          }
+        ]
+      }
+    `;
+
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6", 
       max_tokens: 4000,
-      system: "You are a Website Architect. Output ONLY valid JSON without markdown formatting. Format: { pages: [{ slug: 'index', blocks: [{ type: 'hero', headline: '...', subhead: '...' }, { type: 'features', items: [{ title: '...', description: '...' }] }, { type: 'text', content: '...' }] }] }",
+      system: systemPrompt,
       messages: [{ role: "user", content: prompt }],
     });
 
     const rawJson = (msg.content[0] as any).text;
     
-    // Safety net: Cleans up the response if Claude wraps it in ```json
     let snapshot;
     try {
       snapshot = JSON.parse(rawJson);
@@ -47,7 +74,7 @@ export async function POST(req: Request) {
       p_project_id: projectId,
       p_owner_id: user.id,
       p_snapshot: snapshot,
-      p_note: "AI Build",
+      p_note: "Next.js + Supabase Build",
       p_model: "claude-sonnet-4-6"
     });
 
