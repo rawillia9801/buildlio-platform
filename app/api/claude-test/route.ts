@@ -18,7 +18,6 @@ export async function POST(req: Request) {
     const currentState = body.currentState;
     
     const cookieStore = await cookies();
-    
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL || "",
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
@@ -28,62 +27,44 @@ export async function POST(req: Request) {
     const { data: authData } = await supabase.auth.getUser();
     if (!authData?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
-    // --- THE UPGRADE: JINA READER PROXY ---
-    let goodDogContext = "";
-    const lastUserMessage = messages[messages.length - 1].content.toLowerCase();
-    
-    if (lastUserMessage.includes("good dog")) {
-      try {
-        // Using Jina AI to bypass Cloudflare and extract clean Markdown text
-        const gdRes = await fetch("https://r.jina.ai/https://www.gooddog.com/breeders/southwest-virginia-chihuahua-virginia", {
-          headers: { 
-            "Accept": "text/plain",
-            "User-Agent": "Buildlio-ERP/1.0"
-          }
-        });
-        
-        if (gdRes.ok) {
-          const rawText = await gdRes.text();
-          
-          goodDogContext = `
-            SYSTEM ALERT: You successfully scraped the user's live Good Dog profile. Here is the raw text from their page:
-            ---
-            ${rawText.substring(0, 15000)}
-            ---
-            CRITICAL INSTRUCTION: Read the text above. Identify all available puppies, litters, pricing, and availability. 
-            UPDATE the "dogs" section of the JSON state to perfectly match this live data. 
-            DO NOT apologize. Tell the user exactly what you updated based on the website.
-          `;
-        } else {
-          goodDogContext = `\n\nSYSTEM ALERT: Good Dog's firewall is still blocking the connection. Politely ask the user to copy/paste the text from their profile into the chat.`;
-        }
-      } catch (e) {
-        goodDogContext = `\n\nSYSTEM ALERT: Fetch failed. Ask the user to copy/paste.`;
-      }
-    }
-    // --------------------------------------
-
     const systemPrompt = `
-      You are "Chief", the elite AI Executive Assistant for the user. 
-      The user runs "Southwest Virginia Chihuahua" (Dog Breeding), E-commerce, "HostMyWeb.com", and Personal tasks.
-      
-      YOUR JOB:
-      1. Read the CURRENT STATE of their life.
-      2. Listen to their request.
-      3. Return the FULLY UPDATED state alongside a conversational reply.
+      You are an elite AI Executive Assistant managing "Southwest Virginia Chihuahua".
+      Your job is to read the CURRENT STATE, listen to the user's input, and meticulously update a complex relational data structure.
       
       CURRENT STATE:
       ${JSON.stringify(currentState)}
-      ${goodDogContext}
       
-      RULES:
-      Always respond with a single, valid JSON object containing your reply and the new state. NO markdown. NO text outside the JSON.
+      BEHAVIOR RULES:
+      1. RELATIONAL DATA: If a puppy is sold, you must update the puppy's status under its Dam/Litter, add the Buyer to the CRM (with deposit, balance, and due dates), and update Finances (Revenue/Profit).
+      2. LOGISTICS: If transport or appointments are mentioned, add them to the Calendar.
+      3. MARKETING: If a dog is added or sold, automatically draft a high-converting Facebook post with emojis in the marketing section, and set websiteSync to "Pending Update".
+      4. RETURN FULL STATE: You must return the ENTIRE JSON state object, keeping ecommerce, hosting, and personal intact.
       
       EXPECTED JSON FORMAT:
       {
-        "message": "Your conversational reply...",
+        "message": "Conversational reply confirming the updates...",
         "state": {
-          "dogs": { "revenue": 0, "activeLitters": [], "buyers": [] },
+          "dogs": {
+            "finances": { "revenue": 0, "expenses": 0, "profit": 0 },
+            "breedingProgram": [
+              { 
+                "dam": "Name", 
+                "litters": [ 
+                  { "litterId": "L1", "dob": "YYYY-MM-DD", "puppies": [ { "id": "P1", "description": "Male", "price": 0, "status": "Available/Reserved", "buyerName": "null" } ] }
+                ] 
+              }
+            ],
+            "crm": [
+              { "buyer": "Name", "puppy": "P1", "totalPrice": 0, "depositPaid": 0, "balanceDue": 0, "dueDate": "YYYY-MM-DD", "transport": "Details" }
+            ],
+            "calendar": [
+              { "date": "YYYY-MM-DD", "event": "Details", "location": "Location" }
+            ],
+            "marketing": {
+              "websiteSync": "Up to Date",
+              "facebookDrafts": [ "Draft text here..." ]
+            }
+          },
           "ecommerce": { "sales": 0, "shippingCosts": 0, "inventory": [] },
           "hosting": { "mrr": 0, "customers": [] },
           "personal": { "todos": [] }
@@ -108,7 +89,6 @@ export async function POST(req: Request) {
       if (startIndex === -1 || endIndex === -1) throw new Error("No JSON found");
       parsedResponse = JSON.parse(rawJson.slice(startIndex, endIndex + 1));
     } catch (parseErr) {
-      console.error("Failed AI Output:", rawJson);
       return NextResponse.json({ success: false, error: "Failed to parse AI response." }, { status: 500 });
     }
 
@@ -116,7 +96,7 @@ export async function POST(req: Request) {
       p_project_id: projectId,
       p_owner_id: authData.user.id,
       p_snapshot: parsedResponse.state,
-      p_note: "Dashboard Sync via Jina Reader",
+      p_note: "ERP Relational Update",
       p_model: "claude-sonnet-4-6"
     });
 

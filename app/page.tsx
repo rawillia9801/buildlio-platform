@@ -1,5 +1,5 @@
 /* FILE: app/page.tsx
-   EXECUTIVE AI — Business Management Dashboard
+   EXECUTIVE AI — Fully Relational Breeding ERP
 */
 
 "use client";
@@ -15,25 +15,15 @@ type ViewState = "auth" | "dashboard";
 type Tab = "dogs" | "ecommerce" | "hosting" | "personal";
 type Message = { role: "user" | "assistant", content: string };
 
-// INITIAL MOCK DATA
 const INITIAL_STATE = {
   dogs: { 
-    revenue: 4500, 
-    activeLitters: [{ id: "L1", mother: "Bella", puppies: 4, available: 3 }], 
-    buyers: [{ name: "Sarah J.", puppy: "Male 1", price: 1500, status: "Deposit Paid" }] 
+    finances: { revenue: 0, expenses: 0, profit: 0 },
+    breedingProgram: [], crm: [], calendar: [], 
+    marketing: { websiteSync: "Up to Date", facebookDrafts: [] }
   },
-  ecommerce: { 
-    sales: 1250, 
-    shippingCosts: 180, 
-    inventory: [{ item: "Clearance Toaster", platform: "Walmart", cost: 15, price: 45, status: "Listed" }] 
-  },
-  hosting: { 
-    mrr: 450, 
-    customers: [{ name: "Local Plumber LLC", domain: "plumberva.com", tier: "Pro $29/mo", status: "Active" }] 
-  },
-  personal: { 
-    todos: [{ task: "Buy dog food", done: false }, { task: "Call accountant", done: true }] 
-  }
+  ecommerce: { sales: 0, shippingCosts: 0, inventory: [] },
+  hosting: { mrr: 0, customers: [] },
+  personal: { todos: [] }
 };
 
 export default function ExecutiveDashboard() {
@@ -53,14 +43,10 @@ export default function ExecutiveDashboard() {
   
   const [projectId, setProjectId] = useState("");
   const [isRunning, setIsRunning] = useState(false);
-  
-  // This holds the entire state of your life!
   const [appState, setAppState] = useState<any>(INITIAL_STATE);
   
   const [chatInput, setChatInput] = useState("");
-  const [messages, setMessages] = useState<Message[]>([
-    { role: "assistant", content: "Good afternoon, Boss. I have your dashboards loaded. What would you like to update today?" }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([{ role: "assistant", content: "Good afternoon. The new SWVA Chihuahua Command Center is online. How can I help you manage the operation today?" }]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -71,6 +57,22 @@ export default function ExecutiveDashboard() {
     });
     return () => subscription.unsubscribe();
   }, [supabase]);
+
+  useEffect(() => {
+    async function loadMasterState() {
+      if (!user) return;
+      const { data: proj } = await supabase.from("projects").select("*").eq("owner_id", user.id).eq("name", "Master Dashboard").order("created_at", { ascending: false }).limit(1).single();
+      if (proj) {
+        setProjectId(proj.id);
+        const { data: versions } = await supabase.from("versions").select("*").eq("project_id", proj.id).order("version_no", { ascending: false }).limit(1);
+        if (versions && versions.length > 0 && versions[0].snapshot?.dogs) {
+          // Merge to ensure new fields exist if loading old data
+          setAppState({ ...INITIAL_STATE, ...versions[0].snapshot });
+        }
+      }
+    }
+    if (view === "dashboard") loadMasterState();
+  }, [view, user, supabase]);
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
@@ -83,68 +85,42 @@ export default function ExecutiveDashboard() {
 
   async function sendMessage() {
     if (!chatInput.trim() || isRunning) return;
-
     const newMessages = [...messages, { role: "user" as const, content: chatInput }];
-    setMessages(newMessages);
-    setChatInput("");
-    setIsRunning(true);
+    setMessages(newMessages); setChatInput(""); setIsRunning(true);
 
     try {
       let currentPid = projectId;
       if (!currentPid) {
         if (!user) throw new Error("Please log in.");
         const { data: proj } = await supabase.from("projects").insert({ owner_id: user.id, name: "Master Dashboard", slug: `erp-${Date.now()}` }).select("id").single();
-        currentPid = proj!.id;
-        setProjectId(currentPid);
+        currentPid = proj!.id; setProjectId(currentPid);
       }
-
       const res = await fetch("/api/claude-test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // Notice we send the CURRENT STATE so the AI knows what to update!
+        method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId: currentPid, messages: newMessages, currentState: appState }),
       });
-
       const data = await res.json();
       if (!res.ok || !data.success) throw new Error(data.error || "Server error");
 
-      const aiResponse = data.data;
-      setMessages(prev => [...prev, { role: "assistant", content: aiResponse.message }]);
-
-      // Update the UI with the new data the AI sent back
-      if (aiResponse.state) {
-        setAppState(aiResponse.state);
-      }
+      setMessages(prev => [...prev, { role: "assistant", content: data.data.message }]);
+      if (data.data.state && data.data.state.dogs) setAppState(data.data.state);
 
     } catch (err: any) {
       setMessages(prev => [...prev, { role: "assistant", content: `❌ Error: ${err.message}` }]);
-    } finally {
-      setIsRunning(false);
-    }
+    } finally { setIsRunning(false); }
   }
 
   return (
     <div className={`${inter.variable} ${fira.variable} h-screen flex flex-col bg-[#0f111a] text-slate-300 font-sans overflow-hidden`}>
-      
-      {/* TOP NAV */}
       <nav className="h-14 shrink-0 border-b border-white/10 bg-[#07080d] flex items-center justify-between px-6 z-50">
         <div className="font-black text-lg text-white flex items-center gap-2">
           <div className="w-6 h-6 bg-emerald-500 rounded text-black flex items-center justify-center text-xs">▲</div>
           Executive<span className="text-emerald-500">AI</span>
         </div>
-        <div className="flex items-center gap-4">
-          {user ? (
-            <>
-              <span className="text-xs text-slate-500">{user.email}</span>
-              <button onClick={() => supabase.auth.signOut()} className="text-xs text-slate-400 hover:text-white border border-white/10 px-3 py-1 rounded">Sign Out</button>
-            </>
-          ) : null}
-        </div>
+        {user && <button onClick={() => supabase.auth.signOut()} className="text-xs text-slate-400 hover:text-white border border-white/10 px-3 py-1 rounded">Sign Out</button>}
       </nav>
 
       <main className="flex-1 relative overflow-hidden">
-        
-        {/* AUTH */}
         {view === "auth" && (
           <div className="h-full flex items-center justify-center">
             <div className="w-full max-w-sm bg-[#161925] border border-white/10 p-8 rounded-2xl">
@@ -152,165 +128,161 @@ export default function ExecutiveDashboard() {
               {authStatus && <div className="mb-4 text-xs font-bold text-red-400 bg-red-500/10 border border-red-500/20 p-3 rounded">{authStatus}</div>}
               <input type="email" placeholder="Email" className="w-full mb-4 bg-[#0f111a] border border-white/10 rounded-lg p-3 text-white outline-none focus:border-emerald-500" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} />
               <input type="password" placeholder="Password" className="w-full mb-4 bg-[#0f111a] border border-white/10 rounded-lg p-3 text-white outline-none focus:border-emerald-500" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
-              <button onClick={handleAuth} disabled={isAuthBusy} className="w-full py-3 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-500 disabled:opacity-50">{isAuthBusy ? "Authenticating..." : "Login"}</button>
+              <button onClick={handleAuth} disabled={isAuthBusy} className="w-full py-3 bg-emerald-600 text-white font-bold rounded-lg hover:bg-emerald-500">{isAuthBusy ? "Authenticating..." : "Login"}</button>
             </div>
           </div>
         )}
 
-        {/* DASHBOARD */}
         {view === "dashboard" && (
           <div className="h-full w-full flex">
-            
-            {/* LEFT PANEL: AI ASSISTANT */}
             <aside className="w-[450px] border-r border-white/10 bg-[#161925] flex flex-col shadow-2xl z-10">
               <div className="p-4 border-b border-white/10 bg-[#07080d] flex items-center gap-2">
                 <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
-                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Chief (Executive Assistant)</div>
+                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Assistant</div>
               </div>
-
               <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-[#0f111a]">
                 {messages.map((msg, i) => (
                   <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div className={`max-w-[85%] rounded-2xl p-4 text-sm leading-relaxed ${msg.role === 'user' ? 'bg-emerald-600 text-white rounded-br-none' : 'bg-[#161925] border border-white/10 text-slate-300 rounded-bl-none'}`}>
-                      {msg.role === 'assistant' && <div className="text-[10px] font-black text-emerald-400 mb-1">CHIEF</div>}
+                      {msg.role === 'assistant' && <div className="text-[10px] font-black text-emerald-400 mb-1">ASSISTANT</div>}
                       {msg.content}
                     </div>
                   </div>
                 ))}
-                {isRunning && (
-                  <div className="flex justify-start">
-                    <div className="bg-[#161925] border border-white/10 rounded-2xl rounded-bl-none p-4 text-sm text-slate-400 flex items-center gap-2">Processing Update...</div>
-                  </div>
-                )}
+                {isRunning && <div className="flex justify-start"><div className="bg-[#161925] border border-white/10 rounded-2xl rounded-bl-none p-4 text-sm text-slate-400 flex items-center gap-2">Updating Database...</div></div>}
                 <div ref={messagesEndRef} />
               </div>
-
               <div className="p-4 border-t border-white/10 bg-[#07080d]">
-                <div className="relative">
-                  <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMessage()} placeholder="e.g. 'I just sold a puppy to John for $1200'" className="w-full bg-[#161925] border border-white/10 rounded-xl pl-4 pr-12 py-4 text-sm text-white focus:border-emerald-500 outline-none" disabled={isRunning} />
-                  <button onClick={sendMessage} disabled={isRunning || !chatInput.trim()} className="absolute right-2 top-2 bottom-2 w-10 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg flex items-center justify-center transition-colors disabled:opacity-50">➔</button>
-                </div>
+                <input value={chatInput} onChange={e => setChatInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMessage()} placeholder="e.g. 'John paid a $500 deposit for male pup'" className="w-full bg-[#161925] border border-white/10 rounded-xl px-4 py-4 text-sm text-white focus:border-emerald-500 outline-none" disabled={isRunning} />
               </div>
             </aside>
 
-            {/* RIGHT PANEL: BUSINESS DASHBOARDS */}
             <main className="flex-1 flex flex-col bg-[#07080d]">
-              
-              {/* TAB SELECTION */}
-              <div className="h-14 border-b border-white/10 flex px-4 gap-6 items-end">
-                {[
-                  { id: "dogs", label: "🐾 SWVA Chihuahuas" },
-                  { id: "ecommerce", label: "📦 E-Commerce" },
-                  { id: "hosting", label: "🌐 HostMyWeb" },
-                  { id: "personal", label: "👤 Personal" }
-                ].map(tab => (
-                  <button key={tab.id} onClick={() => setActiveTab(tab.id as Tab)} className={`pb-3 text-sm font-bold border-b-2 transition-colors ${activeTab === tab.id ? "border-emerald-500 text-emerald-400" : "border-transparent text-slate-500 hover:text-slate-300"}`}>
-                    {tab.label}
-                  </button>
+              <div className="h-14 border-b border-white/10 flex px-4 gap-6 items-end shrink-0">
+                {[{ id: "dogs", label: "🐾 SWVA Chihuahuas" }, { id: "ecommerce", label: "📦 E-Commerce" }].map(tab => (
+                  <button key={tab.id} onClick={() => setActiveTab(tab.id as Tab)} className={`pb-3 text-sm font-bold border-b-2 transition-colors ${activeTab === tab.id ? "border-emerald-500 text-emerald-400" : "border-transparent text-slate-500 hover:text-slate-300"}`}>{tab.label}</button>
                 ))}
               </div>
 
-              {/* DATA RENDERING */}
               <div className="flex-1 overflow-y-auto p-8 bg-[#0f111a]">
-                <div className="max-w-5xl mx-auto space-y-6">
+                <div className="max-w-6xl mx-auto space-y-8">
                   
-                  {/* DOGS TAB */}
                   {activeTab === "dogs" && (
-                    <div className="animate-in fade-in">
-                      <h2 className="text-2xl font-black text-white mb-6">Breeding Operations</h2>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                        <div className="bg-[#161925] border border-white/10 p-6 rounded-2xl">
-                          <div className="text-xs font-bold text-slate-500 uppercase">Gross Revenue</div>
-                          <div className="text-3xl font-black text-emerald-400 mt-2">${appState.dogs.revenue}</div>
+                    <div className="animate-in fade-in space-y-8">
+                      {/* SECTION 1: FINANCES & MARKETING */}
+                      <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                        <div className="bg-[#161925] border border-white/10 p-5 rounded-2xl">
+                          <div className="text-[10px] font-bold text-slate-500 uppercase">Gross Revenue</div>
+                          <div className="text-2xl font-black text-emerald-400 mt-1">${appState.dogs?.finances?.revenue || 0}</div>
                         </div>
-                      </div>
-                      <div className="space-y-4 mb-8">
-                        <h3 className="text-sm font-bold text-slate-400 uppercase">Active Litters</h3>
-                        {appState.dogs.activeLitters.map((l: any, i: number) => (
-                          <div key={i} className="bg-[#161925] border border-white/10 p-4 rounded-xl flex justify-between items-center">
-                            <div><span className="font-bold text-white">{l.mother}'s Litter</span> (ID: {l.id})</div>
-                            <div className="text-sm"><span className="text-emerald-400 font-bold">{l.available}</span> of {l.puppies} Available</div>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="space-y-4">
-                        <h3 className="text-sm font-bold text-slate-400 uppercase">Recent Buyers</h3>
-                        {appState.dogs.buyers.map((b: any, i: number) => (
-                          <div key={i} className="bg-[#161925] border border-white/10 p-4 rounded-xl flex justify-between items-center text-sm">
-                            <div className="text-white font-bold">{b.name} <span className="text-slate-500 font-normal ml-2">({b.puppy})</span></div>
-                            <div className="flex items-center gap-4">
-                              <span className="text-emerald-400">${b.price}</span>
-                              <span className="bg-slate-800 px-2 py-1 rounded text-xs">{b.status}</span>
+                        <div className="bg-[#161925] border border-white/10 p-5 rounded-2xl">
+                          <div className="text-[10px] font-bold text-slate-500 uppercase">Expenses</div>
+                          <div className="text-2xl font-black text-red-400 mt-1">${appState.dogs?.finances?.expenses || 0}</div>
+                        </div>
+                        <div className="bg-[#161925] border border-white/10 p-5 rounded-2xl col-span-2 flex items-center justify-between">
+                          <div>
+                            <div className="text-[10px] font-bold text-slate-500 uppercase">Website Sync Status</div>
+                            <div className={`text-sm font-bold mt-1 ${appState.dogs?.marketing?.websiteSync === "Synced" ? "text-emerald-400" : "text-amber-400 animate-pulse"}`}>
+                              {appState.dogs?.marketing?.websiteSync || "Pending Update"}
                             </div>
                           </div>
-                        ))}
+                          <button className="bg-white/5 border border-white/10 px-4 py-2 rounded text-xs font-bold hover:bg-white/10">Push to Website</button>
+                        </div>
                       </div>
-                    </div>
-                  )}
 
-                  {/* ECOMMERCE TAB */}
-                  {activeTab === "ecommerce" && (
-                    <div className="animate-in fade-in">
-                      <h2 className="text-2xl font-black text-white mb-6">Marketplace Sales</h2>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                        <div className="bg-[#161925] border border-white/10 p-6 rounded-2xl">
-                          <div className="text-xs font-bold text-slate-500 uppercase">Gross Sales</div>
-                          <div className="text-3xl font-black text-emerald-400 mt-2">${appState.ecommerce.sales}</div>
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                        {/* SECTION 2: BREEDING PROGRAM */}
+                        <div className="space-y-4">
+                          <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2"><span className="text-emerald-500">●</span> The Breeding Program</h3>
+                          {(!appState.dogs?.breedingProgram || appState.dogs.breedingProgram.length === 0) && <div className="text-sm text-slate-600 bg-[#161925] p-6 rounded-2xl border border-white/5">No dogs or litters entered yet.</div>}
+                          
+                          {appState.dogs?.breedingProgram?.map((prog: any, i: number) => (
+                            <div key={i} className="bg-[#161925] border border-white/10 rounded-2xl overflow-hidden">
+                              <div className="bg-[#07080d] px-5 py-3 border-b border-white/5 font-black text-white flex justify-between">
+                                Dam: {prog.dam}
+                              </div>
+                              {prog.litters?.map((litter: any, j: number) => (
+                                <div key={j} className="p-5 border-b border-white/5 last:border-0">
+                                  <div className="text-xs text-slate-500 mb-3 font-mono">Litter DOB: {litter.dob}</div>
+                                  <div className="space-y-2">
+                                    {litter.puppies?.map((pup: any, k: number) => (
+                                      <div key={k} className="flex items-center justify-between bg-[#0f111a] p-3 rounded-lg border border-white/5">
+                                        <div>
+                                          <div className="text-sm font-bold text-white">{pup.description}</div>
+                                          <div className="text-xs text-slate-400">${pup.price}</div>
+                                        </div>
+                                        <div className={`text-xs px-2 py-1 rounded font-bold ${pup.status === 'Available' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-indigo-500/20 text-indigo-400'}`}>
+                                          {pup.status} {pup.buyerName && pup.buyerName !== "null" ? `(${pup.buyerName})` : ''}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ))}
                         </div>
-                        <div className="bg-[#161925] border border-white/10 p-6 rounded-2xl">
-                          <div className="text-xs font-bold text-slate-500 uppercase">Shipping Costs</div>
-                          <div className="text-3xl font-black text-red-400 mt-2">${appState.ecommerce.shippingCosts}</div>
-                        </div>
-                        <div className="bg-[#161925] border border-white/10 p-6 rounded-2xl">
-                          <div className="text-xs font-bold text-slate-500 uppercase">Net Profit</div>
-                          <div className="text-3xl font-black text-white mt-2">${appState.ecommerce.sales - appState.ecommerce.shippingCosts}</div>
-                        </div>
-                      </div>
-                      <h3 className="text-sm font-bold text-slate-400 uppercase mb-4">Current Inventory</h3>
-                      <div className="bg-[#161925] border border-white/10 rounded-2xl overflow-hidden">
-                        <table className="w-full text-left text-sm">
-                          <thead className="bg-[#07080d] text-slate-500"><tr><th className="p-4">Item</th><th className="p-4">Platform</th><th className="p-4">Price</th><th className="p-4">Status</th></tr></thead>
-                          <tbody>
-                            {appState.ecommerce.inventory.map((inv: any, i: number) => (
-                              <tr key={i} className="border-t border-white/5"><td className="p-4 text-white">{inv.item}</td><td className="p-4">{inv.platform}</td><td className="p-4 text-emerald-400">${inv.price}</td><td className="p-4">{inv.status}</td></tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
 
-                  {/* HOSTING TAB */}
-                  {activeTab === "hosting" && (
-                    <div className="animate-in fade-in">
-                      <h2 className="text-2xl font-black text-white mb-6">HostMyWeb Operations</h2>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                        <div className="bg-[#161925] border border-white/10 p-6 rounded-2xl">
-                          <div className="text-xs font-bold text-slate-500 uppercase">Monthly Recurring (MRR)</div>
-                          <div className="text-3xl font-black text-emerald-400 mt-2">${appState.hosting.mrr}</div>
-                        </div>
-                      </div>
-                      <h3 className="text-sm font-bold text-slate-400 uppercase mb-4">Active Customers</h3>
-                      {appState.hosting.customers.map((c: any, i: number) => (
-                        <div key={i} className="bg-[#161925] border border-white/10 p-4 rounded-xl flex justify-between items-center mb-2">
-                          <div><div className="font-bold text-white">{c.name}</div><div className="text-xs text-slate-500">{c.domain}</div></div>
-                          <div className="text-right"><div className="text-emerald-400 text-sm font-bold">{c.tier}</div><div className="text-xs text-slate-500">{c.status}</div></div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* PERSONAL TAB */}
-                  {activeTab === "personal" && (
-                    <div className="animate-in fade-in">
-                      <h2 className="text-2xl font-black text-white mb-6">Personal Tasks</h2>
-                      <div className="space-y-2">
-                        {appState.personal.todos.map((todo: any, i: number) => (
-                          <div key={i} className={`p-4 rounded-xl border flex items-center gap-4 ${todo.done ? 'bg-[#07080d] border-white/5 text-slate-600' : 'bg-[#161925] border-white/10 text-white'}`}>
-                            <div className={`w-5 h-5 rounded flex items-center justify-center border ${todo.done ? 'bg-emerald-500/20 border-emerald-500 text-emerald-500' : 'border-slate-600'}`}>{todo.done ? '✓' : ''}</div>
-                            <span className={todo.done ? 'line-through' : ''}>{todo.task}</span>
+                        {/* SECTION 3: CRM & CALENDAR */}
+                        <div className="space-y-8">
+                          <div>
+                            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><span className="text-indigo-500">●</span> CRM & Payments</h3>
+                            {(!appState.dogs?.crm || appState.dogs.crm.length === 0) && <div className="text-sm text-slate-600 bg-[#161925] p-6 rounded-2xl border border-white/5">No active buyers.</div>}
+                            <div className="space-y-3">
+                              {appState.dogs?.crm?.map((buyer: any, i: number) => (
+                                <div key={i} className="bg-[#161925] border border-white/10 p-5 rounded-2xl">
+                                  <div className="flex justify-between items-start mb-3">
+                                    <div>
+                                      <div className="font-bold text-white">{buyer.buyer}</div>
+                                      <div className="text-xs text-slate-400">Purchasing: {buyer.puppy}</div>
+                                    </div>
+                                    <div className="text-right">
+                                      <div className="text-xs text-slate-500">Total: ${buyer.totalPrice}</div>
+                                      <div className="text-xs text-emerald-400">Paid: ${buyer.depositPaid}</div>
+                                    </div>
+                                  </div>
+                                  <div className="bg-[#0f111a] p-3 rounded-lg border border-red-500/20 flex justify-between items-center">
+                                    <span className="text-xs text-red-400 font-bold">Balance Due: ${buyer.balanceDue}</span>
+                                    <span className="text-xs text-slate-500">Due: {buyer.dueDate}</span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
                           </div>
-                        ))}
+
+                          <div>
+                            <h3 className="text-sm font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-2"><span className="text-amber-500">●</span> Logistics Calendar</h3>
+                            <div className="space-y-2">
+                              {(!appState.dogs?.calendar || appState.dogs.calendar.length === 0) && <div className="text-sm text-slate-600 italic">Calendar is clear.</div>}
+                              {appState.dogs?.calendar?.map((cal: any, i: number) => (
+                                <div key={i} className="flex gap-4 items-center bg-[#161925] border border-white/10 p-4 rounded-xl">
+                                  <div className="text-center shrink-0 w-12 border-r border-white/10 pr-4">
+                                    <div className="text-[10px] text-slate-500 uppercase">{cal.date.split('-')[1]}</div>
+                                    <div className="text-lg font-black text-white">{cal.date.split('-')[2]}</div>
+                                  </div>
+                                  <div>
+                                    <div className="text-sm font-bold text-white">{cal.event}</div>
+                                    <div className="text-xs text-slate-400">📍 {cal.location}</div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          {/* DRAFTED POSTS */}
+                          {appState.dogs?.marketing?.facebookDrafts?.length > 0 && (
+                            <div className="bg-indigo-900/20 border border-indigo-500/30 p-5 rounded-2xl">
+                              <div className="text-xs font-bold text-indigo-400 mb-3 uppercase tracking-wider flex justify-between">
+                                Social Media Drafts 
+                                <button className="underline">Post to FB</button>
+                              </div>
+                              {appState.dogs.marketing.facebookDrafts.map((draft: string, i: number) => (
+                                <div key={i} className="text-sm text-slate-300 italic whitespace-pre-line">"{draft}"</div>
+                              ))}
+                            </div>
+                          )}
+
+                        </div>
                       </div>
                     </div>
                   )}
@@ -323,4 +295,5 @@ export default function ExecutiveDashboard() {
       </main>
     </div>
   );
+}
 }
