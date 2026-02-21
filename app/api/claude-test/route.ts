@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Vercel's hard limit
+export const maxDuration = 60;
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || "" });
 
@@ -15,6 +15,7 @@ export async function POST(req: Request) {
     const body = await req.json();
     const projectId = String(body.projectId);
     const messages = body.messages; 
+    const currentState = body.currentState; // The AI needs to know the current state of your businesses!
     
     const cookieStore = await cookies();
     
@@ -25,39 +26,30 @@ export async function POST(req: Request) {
     );
 
     const { data: authData } = await supabase.auth.getUser();
-    if (!authData?.user) {
-      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
-    }
+    if (!authData?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
-    // STRICTER SYSTEM PROMPT
     const systemPrompt = `
-      You are Buildlio, a friendly, personable AI website architect. 
-      Converse with the user to gather requirements before building.
+      You are "Chief", the elite AI Executive Assistant for the user. 
+      The user runs 3 businesses: "Southwest Virginia Chihuahua" (Dog Breeding), E-commerce (Walmart/eBay sales), "HostMyWeb.com" (Web Hosting), plus their Personal life.
       
-      CRITICAL: You MUST ALWAYS respond with a single, valid JSON object. 
-      ABSOLUTELY NO plain text outside the JSON structure. Do not say "Here is your response" or use markdown blocks.
+      Your job is to read the CURRENT STATE of their life, listen to their request, and return the FULLY UPDATED state alongside a conversational reply.
       
-      If you need more info, respond exactly like this:
+      CURRENT STATE:
+      ${JSON.stringify(currentState)}
+      
+      RULES:
+      1. If they say they sold a dog, update the dogs revenue and buyers list.
+      2. If they shipped an eBay item, update the ecommerce inventory and expenses.
+      3. Always respond with a single, valid JSON object containing your reply and the new state. NO text outside the JSON.
+      
+      EXPECTED JSON FORMAT:
       {
-        "type": "chat",
-        "message": "Your friendly conversational reply and question here."
-      }
-      
-      If you have enough info to build, respond exactly like this:
-      {
-        "type": "build",
-        "message": "I've got everything I need! Generating your custom site now...",
-        "snapshot": {
-           "appName": "App Name",
-           "pages": [
-             {
-               "slug": "index",
-               "blocks": [
-                 { "type": "hero", "headline": "Title", "subhead": "Sub" },
-                 { "type": "features", "items": [{ "title": "Feat", "description": "Desc" }] }
-               ]
-             }
-           ]
+        "message": "Your conversational reply acknowledging what you just updated.",
+        "state": {
+          "dogs": { "revenue": 0, "activeLitters": [], "buyers": [] },
+          "ecommerce": { "sales": 0, "shippingCosts": 0, "inventory": [] },
+          "hosting": { "mrr": 0, "customers": [] },
+          "personal": { "todos": [] }
         }
       }
     `;
@@ -74,36 +66,25 @@ export async function POST(req: Request) {
     
     let parsedResponse;
     try {
-      // THE FIX: Aggressive JSON string extraction
       const startIndex = rawJson.indexOf('{');
       const endIndex = rawJson.lastIndexOf('}');
-      
-      if (startIndex === -1 || endIndex === -1) {
-        throw new Error("No JSON structure found in response.");
-      }
-      
-      const cleanJson = rawJson.slice(startIndex, endIndex + 1);
-      parsedResponse = JSON.parse(cleanJson);
-      
+      if (startIndex === -1 || endIndex === -1) throw new Error("No JSON found");
+      parsedResponse = JSON.parse(rawJson.slice(startIndex, endIndex + 1));
     } catch (parseErr) {
-      console.error("Failed AI Output:", rawJson); // Logs to Vercel so you can see what broke it
-      return NextResponse.json({ success: false, error: "Failed to parse AI response. Try sending your message again." }, { status: 500 });
+      console.error("Failed AI Output:", rawJson);
+      return NextResponse.json({ success: false, error: "Failed to parse AI response." }, { status: 500 });
     }
 
-    // ONLY charge credits and save to DB if the AI decided to BUILD the site
-    if (parsedResponse.type === "build") {
-      const { error: rpcError } = await supabase.rpc("save_version_and_charge_credit", {
-        p_project_id: projectId,
-        p_owner_id: authData.user.id,
-        p_snapshot: parsedResponse.snapshot,
-        p_note: "Agentic Chat Build",
-        p_model: "claude-sonnet-4-6"
-      });
+    // Save this state backup to the database so you don't lose your data!
+    const { error: rpcError } = await supabase.rpc("save_version_and_charge_credit", {
+      p_project_id: projectId,
+      p_owner_id: authData.user.id,
+      p_snapshot: parsedResponse.state,
+      p_note: "Dashboard State Update",
+      p_model: "claude-sonnet-4-6"
+    });
 
-      if (rpcError) {
-        return NextResponse.json({ success: false, error: rpcError.message }, { status: 500 });
-      }
-    }
+    if (rpcError) return NextResponse.json({ success: false, error: rpcError.message }, { status: 500 });
     
     return NextResponse.json({ success: true, data: parsedResponse });
 
