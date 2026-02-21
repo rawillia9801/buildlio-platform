@@ -1,5 +1,5 @@
 /* FILE: app/page.tsx
-   BUILDLIO.SITE — Core Application (With Working Export)
+   BUILDLIO.SITE — v3.5: Friendly Wizard & Export
 */
 
 "use client";
@@ -27,8 +27,6 @@ export default function BuildlioApp() {
   const [authStatus, setAuthStatus] = useState("");
 
   const [projectId, setProjectId] = useState("");
-  const [prompt, setPrompt] = useState("");
-  const [note, setNote] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [snapshot, setSnapshot] = useState<any>(null);
   const [history, setHistory] = useState<any[]>([]);
@@ -36,6 +34,16 @@ export default function BuildlioApp() {
   
   const [creditBalance, setCreditBalance] = useState(10);
   const [systemMessage, setSystemMessage] = useState<{ text: string; type: "error" | "success" | "info" } | null>(null);
+
+  // --- THE NEW WIZARD STATE ---
+  const [wizardStep, setWizardStep] = useState(1);
+  const [wizardData, setWizardData] = useState({
+    name: "",
+    industry: "",
+    location: "",
+    services: "",
+    tone: "Professional & Trustworthy"
+  });
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
@@ -63,7 +71,6 @@ export default function BuildlioApp() {
     else { setAuthStatus(""); setView("builder"); }
   }
 
-  // EXPORT HTML FUNCTION
   function exportHTML() {
     if (!snapshot) return;
     const currentPage = snapshot.pages?.find((p: any) => p.slug === activePageSlug) || snapshot.pages?.[0];
@@ -106,25 +113,38 @@ export default function BuildlioApp() {
 
   async function runBuild() {
     if (creditBalance <= 0) {
-      setSystemMessage({ text: "No credits remaining. Upgrade or purchase more.", type: "error" });
+      setSystemMessage({ text: "No credits remaining.", type: "error" });
       return;
     }
-    if (!prompt.trim()) {
-      setSystemMessage({ text: "Prompt required. Please type in the bottom box.", type: "info" });
+    if (!wizardData.name || !wizardData.industry) {
+      setSystemMessage({ text: "Please fill out at least the business name and industry.", type: "error" });
+      setWizardStep(1);
       return;
     }
 
     setIsRunning(true);
-    setSystemMessage({ text: "Compiling snapshot...", type: "info" });
+    setSystemMessage({ text: "Compiling wizard data into snapshot...", type: "info" });
+
+    // --- COMPILE THE WIZARD DATA INTO A SUPER PROMPT ---
+    const compiledPrompt = `
+      Please build a high-end website with the following details:
+      - Business Name: ${wizardData.name}
+      - Industry/Niche: ${wizardData.industry}
+      - Location/Service Area: ${wizardData.location || "Online / Various"}
+      - Core Services/Products: ${wizardData.services || "Standard industry services"}
+      - Brand Tone: ${wizardData.tone}
+
+      Ensure all copywriting reflects this exact business name, location, and tone.
+    `;
 
     try {
       let currentPid = projectId;
       if (!currentPid) {
         if (!user) throw new Error("Not authenticated (no credits charged). Please log in.");
         const { data: proj, error: projErr } = await supabase.from("projects").insert({
-          owner_id: user.id, name: "New AI Build", slug: `site-${Date.now()}`
+          owner_id: user.id, name: wizardData.name || "New AI Build", slug: `site-${Date.now()}`
         }).select("id").single();
-        if (projErr) throw new Error("Could not create project (no credits charged).");
+        if (projErr) throw new Error("Could not create project.");
         currentPid = proj.id;
         setProjectId(currentPid);
       }
@@ -132,22 +152,23 @@ export default function BuildlioApp() {
       const res = await fetch("/api/claude-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: currentPid, prompt, note }),
+        body: JSON.stringify({ projectId: currentPid, prompt: compiledPrompt, note: "Wizard Generation" }),
       });
 
       const textRes = await res.text();
       let data;
       try { data = JSON.parse(textRes); } 
-      catch { throw new Error("AI output invalid or server failed (no credits charged). Try simplifying your request."); }
+      catch { throw new Error("AI output invalid or server failed. Try simplifying."); }
 
       if (!res.ok || !data.success) {
-        throw new Error(`${data.error || "Server error"} (no credits charged).`);
+        throw new Error(`${data.error || "Server error"}`);
       }
 
       setSnapshot(data.snapshot);
       setCreditBalance(prev => prev - 1);
       setSystemMessage({ text: "Build succeeded and version saved.", type: "success" });
       fetchHistory();
+      setWizardStep(1); // Reset wizard for the next edit
 
     } catch (err: any) {
       setSystemMessage({ text: err.message, type: "error" });
@@ -254,9 +275,10 @@ export default function BuildlioApp() {
             {/* LEFT PANEL: CONTROLS */}
             <aside className="w-[400px] border-r border-white/10 bg-[#050505] flex flex-col shadow-2xl z-10">
               <div className="p-4 border-b border-white/10 bg-[#0a0a0f] space-y-3">
-                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Project Context</div>
-                {/* Fixed the placeholder to be clearer! */}
-                <input value={projectId} onChange={e => setProjectId(e.target.value)} placeholder="Leave blank to create NEW project" className="w-full bg-[#050505] border border-white/10 rounded px-3 py-2 text-xs font-mono text-white focus:border-cyan-500 outline-none" />
+                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex justify-between">
+                  Project Context
+                  <button onClick={() => { setProjectId(""); setSnapshot(null); setWizardStep(1); }} className="text-cyan-400 hover:text-cyan-300">New Project ⟳</button>
+                </div>
                 {systemMessage && (
                   <div className={`p-3 rounded-lg text-xs font-mono border ${systemMessage.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' : systemMessage.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400'}`}>
                     {systemMessage.text}
@@ -267,14 +289,14 @@ export default function BuildlioApp() {
               <div className="flex-1 overflow-y-auto p-4 bg-[#020202]">
                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Version History</div>
                 {history.length === 0 ? (
-                  <div className="text-xs text-slate-600 italic">No builds found. Run a prompt to generate v1.</div>
+                  <div className="text-xs text-slate-600 italic">No builds found. Use the wizard below to generate v1.</div>
                 ) : (
                   <div className="space-y-2">
                     {history.map(v => (
                       <button key={v.id} onClick={() => { setSnapshot(v.snapshot); setSystemMessage({ text: `Loaded v${v.version_no}`, type: "success" }); }} className="w-full flex items-center justify-between p-3 rounded-xl bg-[#0a0a0f] border border-white/5 hover:border-cyan-500/50 transition-all text-left group">
                         <div>
                           <div className="text-xs font-black text-cyan-400 group-hover:text-cyan-300">v{v.version_no}</div>
-                          <div className="text-[10px] text-slate-500 mt-1">{v.note || "Prompt-based edit"}</div>
+                          <div className="text-[10px] text-slate-500 mt-1">{v.note || "Wizard Generation"}</div>
                         </div>
                         <div className="text-[9px] font-mono text-slate-600">{new Date(v.created_at).toLocaleTimeString()}</div>
                       </button>
@@ -283,13 +305,62 @@ export default function BuildlioApp() {
                 )}
               </div>
 
-              {/* Chat Input at the bottom */}
-              <div className="p-4 border-t border-white/10 bg-[#0a0a0f] space-y-3">
-                <input value={note} onChange={e => setNote(e.target.value)} placeholder="Revision Note (Optional)" className="w-full bg-[#050505] border border-white/10 rounded px-3 py-2 text-xs font-mono text-white focus:border-cyan-500 outline-none" />
-                <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Type prompt here (e.g. 'Create a dog breeder site')" className="w-full bg-[#050505] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-cyan-500 outline-none resize-none h-24" disabled={isRunning} />
-                <button onClick={runBuild} disabled={isRunning} className={`w-full py-3 rounded-xl font-black text-sm uppercase tracking-wider transition-all ${isRunning ? "bg-cyan-900/30 text-cyan-600 cursor-not-allowed" : "bg-cyan-500 text-black hover:bg-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.3)]"}`}>
-                  {isRunning ? "Generating Snapshot..." : "Run Build"}
-                </button>
+              {/* FRIENDLY WIZARD */}
+              <div className="p-5 border-t border-white/10 bg-[#0a0a0f] flex flex-col gap-4">
+                
+                {/* Step Indicators */}
+                <div className="flex justify-between items-center mb-2">
+                  <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Site Builder Wizard</div>
+                  <div className="flex gap-1">
+                    {[1, 2, 3].map(step => (
+                      <div key={step} className={`w-6 h-1 rounded-full ${wizardStep >= step ? 'bg-cyan-500' : 'bg-white/10'}`} />
+                    ))}
+                  </div>
+                </div>
+
+                {/* Step 1: Basics */}
+                {wizardStep === 1 && (
+                  <div className="space-y-3 animate-in fade-in slide-in-from-right-2">
+                    <label className="text-sm font-bold text-white">Let's start with the basics.</label>
+                    <input autoFocus value={wizardData.name} onChange={e => setWizardData({...wizardData, name: e.target.value})} placeholder="What is your business name?" className="w-full bg-[#050505] border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-cyan-500 outline-none" />
+                    <input value={wizardData.industry} onChange={e => setWizardData({...wizardData, industry: e.target.value})} placeholder="What industry? (e.g. Dog Breeder, Plumber)" className="w-full bg-[#050505] border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-cyan-500 outline-none" />
+                    <button onClick={() => setWizardStep(2)} disabled={!wizardData.name || !wizardData.industry} className="w-full py-3 mt-2 bg-white/10 hover:bg-white/20 text-white font-bold rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed">Next Step ➔</button>
+                  </div>
+                )}
+
+                {/* Step 2: Details */}
+                {wizardStep === 2 && (
+                  <div className="space-y-3 animate-in fade-in slide-in-from-right-2">
+                    <label className="text-sm font-bold text-white">Give me some details to work with.</label>
+                    <input autoFocus value={wizardData.location} onChange={e => setWizardData({...wizardData, location: e.target.value})} placeholder="Where are you located? (City, State)" className="w-full bg-[#050505] border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-cyan-500 outline-none" />
+                    <textarea value={wizardData.services} onChange={e => setWizardData({...wizardData, services: e.target.value})} placeholder="List your top 2-3 services or products..." className="w-full bg-[#050505] border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-cyan-500 outline-none resize-none h-20" />
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={() => setWizardStep(1)} className="px-4 py-3 bg-white/5 hover:bg-white/10 text-slate-400 rounded-lg transition-all">Back</button>
+                      <button onClick={() => setWizardStep(3)} className="flex-1 py-3 bg-white/10 hover:bg-white/20 text-white font-bold rounded-lg transition-all">Next Step ➔</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Step 3: Vibe & Build */}
+                {wizardStep === 3 && (
+                  <div className="space-y-3 animate-in fade-in slide-in-from-right-2">
+                    <label className="text-sm font-bold text-white">What vibe should the website have?</label>
+                    <select value={wizardData.tone} onChange={e => setWizardData({...wizardData, tone: e.target.value})} className="w-full bg-[#050505] border border-white/10 rounded-lg px-4 py-3 text-sm text-white focus:border-cyan-500 outline-none appearance-none">
+                      <option value="Professional & Trustworthy">Professional & Trustworthy</option>
+                      <option value="Warm, Friendly & Welcoming">Warm, Friendly & Welcoming</option>
+                      <option value="High-End & Luxurious">High-End & Luxurious</option>
+                      <option value="Modern & Tech-Forward">Modern & Tech-Forward</option>
+                      <option value="Fun, Playful & Energetic">Fun, Playful & Energetic</option>
+                    </select>
+                    <div className="flex gap-2 pt-2">
+                      <button onClick={() => setWizardStep(2)} disabled={isRunning} className="px-4 py-3 bg-white/5 hover:bg-white/10 text-slate-400 rounded-lg transition-all disabled:opacity-50">Back</button>
+                      <button onClick={runBuild} disabled={isRunning} className={`flex-1 py-3 rounded-lg font-black text-sm uppercase tracking-wider transition-all ${isRunning ? "bg-cyan-900/30 text-cyan-600 cursor-not-allowed" : "bg-cyan-500 text-black hover:bg-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.3)]"}`}>
+                        {isRunning ? "Generating..." : "Generate Site"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+
               </div>
             </aside>
 
@@ -304,7 +375,6 @@ export default function BuildlioApp() {
                   ))}
                 </div>
                 <div className="flex gap-2">
-                  {/* EXPORT HTML IS NOW CLICKABLE */}
                   <button onClick={exportHTML} disabled={!snapshot} className={`text-xs font-bold px-3 py-1.5 rounded border transition-colors ${snapshot ? "text-slate-900 border-slate-300 hover:bg-slate-50" : "text-slate-400 border-slate-200 cursor-not-allowed"}`}>
                     Export HTML
                   </button>
@@ -318,7 +388,7 @@ export default function BuildlioApp() {
                     <div className="text-center text-slate-400">
                       <div className="text-4xl mb-2 font-black">⬡</div>
                       <p className="text-sm font-bold">Canvas Empty</p>
-                      <p className="text-xs mt-1 max-w-xs mx-auto">Type your prompt in the bottom left box to generate a site.</p>
+                      <p className="text-xs mt-1 max-w-xs mx-auto">Use the wizard on the left to start building your site.</p>
                     </div>
                   </div>
                 ) : (
