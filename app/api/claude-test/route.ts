@@ -24,9 +24,9 @@ export async function POST(req: Request) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
-    // --- THE FIX: Pointing to the newest, valid Claude 3.7 model ---
+    // --- THE FIX: Pointing to the active Claude Sonnet 4.6 model ---
     const msg = await anthropic.messages.create({
-      model: "claude-3-7-sonnet-20250219", 
+      model: "claude-sonnet-4-6", 
       max_tokens: 4000,
       system: "You are a Website Architect. Output ONLY valid JSON without markdown formatting. Format: { pages: [{ slug: 'index', blocks: [{ type: 'hero', headline: '...', subhead: '...' }, { type: 'features', items: [{ title: '...', description: '...' }] }, { type: 'text', content: '...' }] }] }",
       messages: [{ role: "user", content: prompt }],
@@ -48,7 +48,7 @@ export async function POST(req: Request) {
       p_owner_id: user.id,
       p_snapshot: snapshot,
       p_note: "AI Build",
-      p_model: "claude-3-7-sonnet"
+      p_model: "claude-sonnet-4-6"
     });
 
     if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
