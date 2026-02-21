@@ -1,5 +1,5 @@
 /* FILE: app/page.tsx
-   DOCUDRAFT AI — Legal Document Generator
+   DOCUDRAFT AI — Legal Document Generator (With Auth Error Handling)
 */
 
 "use client";
@@ -25,6 +25,10 @@ export default function DocuDraftApp() {
   const [user, setUser] = useState<{ email?: string; id?: string } | null>(null);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
+  
+  // --- RESTORED AUTH ERROR STATE ---
+  const [authStatus, setAuthStatus] = useState("");
+  const [isAuthBusy, setIsAuthBusy] = useState(false);
   
   const [projectId, setProjectId] = useState("");
   const [isRunning, setIsRunning] = useState(false);
@@ -57,12 +61,20 @@ export default function DocuDraftApp() {
     if (data) setHistory(data);
   }
 
+  // --- RESTORED AUTH ERROR HANDLING ---
   async function handleAuth() {
+    setAuthStatus("");
+    setIsAuthBusy(true);
     const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password: loginPassword });
-    if (!error) setView("builder");
+    setIsAuthBusy(false);
+    
+    if (error) {
+      setAuthStatus(error.message);
+    } else {
+      setView("builder");
+    }
   }
 
-  // --- NEW EXPORT FUNCTION: Print / Save to PDF ---
   function printDocument() {
     if (!snapshot) return;
     const printWindow = window.open('', '', 'height=800,width=800');
@@ -168,7 +180,6 @@ export default function DocuDraftApp() {
 
       <main className="flex-1 relative overflow-hidden">
         
-        {/* LANDING */}
         {view === "landing" && (
           <div className="h-full overflow-y-auto p-10 bg-[radial-gradient(#ffffff0a_1px,transparent_1px)] [background-size:24px_24px]">
             <div className="max-w-4xl mx-auto text-center space-y-8 mt-10">
@@ -181,23 +192,31 @@ export default function DocuDraftApp() {
           </div>
         )}
 
-        {/* AUTH */}
+        {/* RESTORED AUTH SCREEN */}
         {view === "auth" && (
           <div className="h-full flex items-center justify-center">
             <div className="w-full max-w-sm bg-[#0f172a] border border-white/10 p-8 rounded-2xl">
               <h2 className="text-2xl font-black text-white mb-6">Client Login</h2>
+              
+              {/* This is the missing error box! */}
+              {authStatus && (
+                <div className="mb-4 text-xs font-bold text-red-400 bg-red-500/10 border border-red-500/20 p-3 rounded">
+                  {authStatus}
+                </div>
+              )}
+
               <input type="email" placeholder="Email" className="w-full mb-4 bg-[#020617] border border-white/10 rounded-lg p-3 text-white outline-none focus:border-indigo-500" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} />
               <input type="password" placeholder="Password" className="w-full mb-4 bg-[#020617] border border-white/10 rounded-lg p-3 text-white outline-none focus:border-indigo-500" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
-              <button onClick={handleAuth} className="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-500">Authenticate</button>
+              <button onClick={handleAuth} disabled={isAuthBusy} className="w-full py-3 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-500 disabled:opacity-50">
+                {isAuthBusy ? "Authenticating..." : "Authenticate"}
+              </button>
             </div>
           </div>
         )}
 
-        {/* BUILDER PAGE */}
         {view === "builder" && (
           <div className="h-full w-full flex">
             
-            {/* LEFT PANEL: PARALEGAL AGENT */}
             <aside className="w-[450px] border-r border-white/10 bg-[#0f172a] flex flex-col shadow-2xl z-10">
               <div className="p-4 border-b border-white/10 bg-[#020617] flex justify-between items-center">
                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
@@ -206,7 +225,6 @@ export default function DocuDraftApp() {
                 <button onClick={() => { setMessages([{ role: "assistant", content: "Let's draft a new document. What do you need?" }]); setSnapshot(null); setProjectId(""); }} className="text-indigo-400 text-xs hover:text-indigo-300">New Document ⟳</button>
               </div>
 
-              {/* CHAT WINDOW */}
               <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-[#020617]">
                 {messages.map((msg, i) => (
                   <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
@@ -228,7 +246,6 @@ export default function DocuDraftApp() {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* CHAT INPUT */}
               <div className="p-4 border-t border-white/10 bg-[#020617]">
                 <div className="relative">
                   <input 
@@ -247,7 +264,6 @@ export default function DocuDraftApp() {
               </div>
             </aside>
 
-            {/* RIGHT PANEL: DOCUMENT PREVIEW */}
             <main className="flex-1 bg-[#cbd5e1] flex flex-col relative overflow-hidden">
               <header className="h-12 bg-white border-b border-slate-300 flex items-center justify-between px-4 z-10 shadow-sm">
                 <div className="text-sm font-bold text-slate-800">
