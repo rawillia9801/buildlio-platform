@@ -28,36 +28,37 @@ export async function POST(req: Request) {
     const { data: authData } = await supabase.auth.getUser();
     if (!authData?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
-    // --- NEW: THE GOOD DOG SCRAPER TOOL ---
+    // --- THE UPGRADE: JINA READER PROXY ---
     let goodDogContext = "";
     const lastUserMessage = messages[messages.length - 1].content.toLowerCase();
     
     if (lastUserMessage.includes("good dog")) {
       try {
-        // Fetch your live profile
-        const gdRes = await fetch("https://www.gooddog.com/breeders/southwest-virginia-chihuahua-virginia", {
+        // Using Jina AI to bypass Cloudflare and extract clean Markdown text
+        const gdRes = await fetch("https://r.jina.ai/https://www.gooddog.com/breeders/southwest-virginia-chihuahua-virginia", {
           headers: { 
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36" 
+            "Accept": "text/plain",
+            "User-Agent": "Buildlio-ERP/1.0"
           }
         });
         
         if (gdRes.ok) {
-          const html = await gdRes.text();
-          // Strip the HTML tags so Claude just gets the raw text (names, prices, availability)
-          const rawText = html.replace(/<[^>]*>?/gm, ' ').replace(/\s+/g, ' ');
+          const rawText = await gdRes.text();
           
           goodDogContext = `
-            SYSTEM ALERT: The user requested a Good Dog sync. Here is the raw scraped text currently on their public Good Dog profile:
+            SYSTEM ALERT: You successfully scraped the user's live Good Dog profile. Here is the raw text from their page:
             ---
-            ${rawText.substring(0, 12000)}
+            ${rawText.substring(0, 15000)}
             ---
-            Carefully read the text above. Identify any new litters, puppies, or availability statuses, and UPDATE the "dogs" section of the JSON state to match this live data.
+            CRITICAL INSTRUCTION: Read the text above. Identify all available puppies, litters, pricing, and availability. 
+            UPDATE the "dogs" section of the JSON state to perfectly match this live data. 
+            DO NOT apologize. Tell the user exactly what you updated based on the website.
           `;
         } else {
-          goodDogContext = `\n\nSYSTEM ALERT: Tried to scrape Good Dog but their server blocked the request (Status: ${gdRes.status}). Inform the user politely.`;
+          goodDogContext = `\n\nSYSTEM ALERT: Good Dog's firewall is still blocking the connection. Politely ask the user to copy/paste the text from their profile into the chat.`;
         }
       } catch (e) {
-        goodDogContext = `\n\nSYSTEM ALERT: Good Dog fetch failed.`;
+        goodDogContext = `\n\nSYSTEM ALERT: Fetch failed. Ask the user to copy/paste.`;
       }
     }
     // --------------------------------------
@@ -115,7 +116,7 @@ export async function POST(req: Request) {
       p_project_id: projectId,
       p_owner_id: authData.user.id,
       p_snapshot: parsedResponse.state,
-      p_note: "Dashboard Sync",
+      p_note: "Dashboard Sync via Jina Reader",
       p_model: "claude-sonnet-4-6"
     });
 
