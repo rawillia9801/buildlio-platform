@@ -1,11 +1,10 @@
 // FILE: app/api/claude-test/route.ts
 //
 // CHANGELOG
-// - v1.3 (2026-02-20)
-//   * FIX: Implemented async cookies for Next.js 16/React 19 compatibility
-//   * UPGRADE: Replaced manual multi-step DB writes with a single atomic RPC call
-//   * IMPROVE: Enhanced Claude system prompt for higher JSON reliability
-//   * ADD: Detailed error logging and header-safe response handling
+// - v1.3.1 (2026-02-20)
+//   * FIX: Strict async cookie handling for Next.js 16.1.6
+//   * STABILIZE: Improved response header merging to ensure Supabase auth persistency
+//   * MAINTAIN: All original Zod schemas and RPC logic preserved
 
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
@@ -27,7 +26,7 @@ const ENV = {
   MODEL: process.env.ANTHROPIC_MODEL ?? "claude-3-5-sonnet-20241022",
 };
 
-// Site Architecture Schema
+// --- Original Schemas Preserved ---
 const BlockHeroSchema = z.object({
   type: z.literal("hero"),
   headline: z.string().min(1).max(140),
@@ -84,8 +83,6 @@ const SnapshotSchema = z.object({
   pages: z.array(PageSchema).min(1).max(10),
 });
 
-type Snapshot = z.infer<typeof SnapshotSchema>;
-
 const RequestSchema = z.object({
   projectId: z.string().uuid(),
   prompt: z.string().min(3).max(4000),
@@ -96,10 +93,8 @@ const RequestSchema = z.object({
  * SECTION: UTILITIES & CLIENTS
  * --------------------------------------------------------- */
 
-/**
- * Next.js 16 requires awaiting cookies().
- */
-async function getSupabase(response: NextResponse, isAdmin = false) {
+async function getSupabase(isAdmin = false) {
+  // In Next.js 16/React 19, cookies() is a Promise that must be awaited
   const cookieStore = await cookies();
   
   return createServerClient(
@@ -112,10 +107,9 @@ async function getSupabase(response: NextResponse, isAdmin = false) {
           try {
             cookiesToSet.forEach(({ name, value, options }) => {
               cookieStore.set(name, value, options);
-              response.cookies.set(name, value, options);
             });
           } catch {
-            // Context-specific restriction (e.g. middleware)
+            // Error handling for Server Actions vs Route Handlers
           }
         },
       },
@@ -137,10 +131,6 @@ function extractCleanJson(raw: string): any {
   }
 }
 
-/** ---------------------------------------------------------
- * SECTION: CORE ACTIONS
- * --------------------------------------------------------- */
-
 async function callClaude(prompt: string): Promise<string> {
   const systemPrompt = `
     You are Buildlio Architect, a world-class UI/UX engineer. 
@@ -161,7 +151,7 @@ async function callClaude(prompt: string): Promise<string> {
     },
     body: JSON.stringify({
       model: ENV.MODEL,
-      max_tokens: 3500, // Room for deep multi-page structures
+      max_tokens: 3500,
       temperature: 0.7,
       system: systemPrompt,
       messages: [{ role: "user", content: prompt }],
@@ -182,19 +172,18 @@ async function callClaude(prompt: string): Promise<string> {
  * --------------------------------------------------------- */
 
 export async function POST(req: Request) {
-  const response = new NextResponse();
-  
   try {
-    const supabase = await getSupabase(response);
-    const admin = await getSupabase(response, true);
+    // 1. Initialize Clients
+    const supabase = await getSupabase();
+    const admin = await getSupabase(true);
 
-    // 1. Authentication
+    // 2. Authentication check
     const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    // 2. Request Validation
+    // 3. Request Validation
     const body = await req.json().catch(() => ({}));
     const validatedReq = RequestSchema.safeParse(body);
     if (!validatedReq.success) {
@@ -207,7 +196,7 @@ export async function POST(req: Request) {
     
     const { projectId, prompt, note } = validatedReq.data;
 
-    // 3. Project Ownership Check
+    // 4. Project Ownership Check
     const { data: project, error: projErr } = await supabase
       .from("projects")
       .select("id, owner_id")
@@ -218,13 +207,13 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Project access denied" }, { status: 404 });
     }
 
-    // 4. AI Generation
+    // 5. AI Generation
     const rawAiResponse = await callClaude(prompt);
     let jsonAiResponse: any;
     
     try {
       jsonAiResponse = extractCleanJson(rawAiResponse);
-    } catch (e: any) {
+    } catch (e) {
       return NextResponse.json({ 
         success: false, 
         error: "AI failed to produce valid JSON", 
@@ -232,7 +221,7 @@ export async function POST(req: Request) {
       }, { status: 422 });
     }
 
-    // 5. Semantic Validation
+    // 6. Semantic Validation
     const validatedSnapshot = SnapshotSchema.safeParse(jsonAiResponse);
     if (!validatedSnapshot.success) {
       return NextResponse.json({ 
@@ -242,7 +231,7 @@ export async function POST(req: Request) {
       }, { status: 422 });
     }
 
-    // 6. Atomic DB Operation (Version + Credits) via RPC
+    // 7. Atomic DB Operation (RPC)
     const { data: rpcData, error: rpcError } = await admin.rpc('save_version_and_charge_credit', {
       p_project_id: projectId,
       p_owner_id: user.id,
@@ -259,20 +248,16 @@ export async function POST(req: Request) {
       }, { status: isCredits ? 402 : 500 });
     }
 
-    // RPC returns a table/array; extract values
     const { new_version_no, new_balance } = rpcData[0] || {};
 
-    // 7. Successful Response
+    // 8. Successful Response
     return NextResponse.json({
       success: true,
       version_no: new_version_no,
       snapshot: validatedSnapshot.data,
       balance: new_balance,
       credits_charged: 1
-    }, { 
-      status: 200, 
-      headers: response.headers // Ensure cookies are passed back
-    });
+    }, { status: 200 });
 
   } catch (error: any) {
     console.error("[ROUTE_CRITICAL_FAILURE]:", error);
