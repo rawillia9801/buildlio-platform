@@ -1,5 +1,5 @@
 /* FILE: app/page.tsx
-   Buildlio Platform — v2.0: FULL UI RESTORATION + VISUAL RENDERER
+   Buildlio Platform — v2.1: FULL UI + ROBUST ERROR HANDLING
 */
 
 "use client";
@@ -128,6 +128,7 @@ export default function Home() {
     return created.id as string;
   }
 
+  // UPDATED ROBUST BUILD FUNCTION
   async function runArchitectBuild() {
     setLastError("");
     setLastResult(null);
@@ -143,7 +144,20 @@ export default function Home() {
         body: JSON.stringify({ projectId: pid, prompt: trimmedPrompt }),
       });
 
-      const data = await res.json();
+      // --- THE FIX: Read as text first to catch crashes & timeouts ---
+      const textResponse = await res.text();
+      let data;
+      try {
+        data = JSON.parse(textResponse);
+      } catch (parseError) {
+        // If it's not JSON, we throw the actual text (or state that it timed out)
+        if (res.status === 504) {
+          throw new Error("Vercel Timeout (504): Claude took too long to generate the site.");
+        }
+        throw new Error(`Server Error (${res.status}): ${textResponse.slice(0, 150) || "Empty Response"}`);
+      }
+      // -------------------------------------------------------------
+
       if (!res.ok || data?.success === false) throw new Error(data?.error || "Request failed.");
       
       setLastResult(data);
@@ -167,7 +181,7 @@ export default function Home() {
       `}</style>
 
       <div className="h-screen flex flex-col overflow-hidden">
-        {/* TOP NAVIGATION (Restored) */}
+        {/* TOP NAVIGATION */}
         <nav className="h-16 shrink-0 z-50 border-b border-slate-800/80 bg-[rgba(21,23,37,0.7)] backdrop-blur-[16px]">
           <div className="h-full px-6 flex items-center justify-between">
             <div className="flex items-center gap-8">
@@ -204,7 +218,7 @@ export default function Home() {
           {page === "builder" && (
             <div className="h-full w-full flex flex-row">
               
-              {/* LEFT SIDEBAR (Restored) */}
+              {/* LEFT SIDEBAR */}
               <section className="w-full md:w-[400px] lg:w-[450px] flex flex-col border-r border-slate-800/80 bg-[#151725] z-10 shadow-2xl">
                 <div className="p-4 border-b border-slate-800/80 bg-[#0b0c15]/50 shrink-0">
                   <h2 className="text-sm font-semibold text-white flex items-center gap-2"><span className="text-cyan-300">✦</span> Architect AI</h2>
@@ -254,7 +268,7 @@ export default function Home() {
                 </div>
               </section>
 
-              {/* RIGHT CANVAS (The Visual Renderer merged with the Dark Grid) */}
+              {/* RIGHT CANVAS */}
               <section className="flex-1 bg-black relative flex flex-col">
                 <div className="h-12 border-b border-slate-800/80 bg-[#151725] flex items-center justify-between px-4 z-10">
                   <div className="flex items-center gap-2 text-slate-500 text-xs font-mono">🔒 preview.buildlio.site</div>
@@ -262,7 +276,6 @@ export default function Home() {
                 
                 <div className="flex-1 overflow-y-auto relative">
                   {!lastResult?.snapshot ? (
-                    /* The beautiful dark empty state grid */
                     <div className="absolute inset-0 flex items-center justify-center bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:20px_20px]">
                       <div className="text-center text-slate-500/70">
                         <div className="text-6xl mb-4">⬡</div>
@@ -270,7 +283,6 @@ export default function Home() {
                       </div>
                     </div>
                   ) : (
-                    /* The generated site sitting on top of the canvas */
                     <div className="min-h-full bg-white text-slate-900 animate-in fade-in duration-700 shadow-2xl">
                       {lastResult.snapshot.pages?.[0]?.blocks?.map((block: any, i: number) => (
                         <div key={i} className="border-b border-slate-200 last:border-0">
