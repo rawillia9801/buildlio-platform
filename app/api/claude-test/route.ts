@@ -6,7 +6,7 @@ import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 60; 
+export const maxDuration = 60; // Hard limit for Vercel Hobby tier
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
@@ -24,30 +24,27 @@ export async function POST(req: Request) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
-    // --- THE FIX: Added strict conciseness rules to the prompt ---
+    // --- THE FIX: The Speed-Optimized Prompt ---
     const systemPrompt = `
       You are an elite Next.js and Supabase full-stack engineer. 
-      The user wants a high-end, modern web application.
       
-      CRITICAL: You must keep all code highly concise. Do not write unnecessary boilerplate or explanatory comments. If you write too much, the JSON will truncate and the system will crash.
+      CRITICAL LIMITATION: You are running on a server with a strict 60-second timeout. You MUST finish generating this JSON in under 40 seconds.
+      1. Make the "pages" array highly detailed for a beautiful visual preview.
+      2. Make the "database" schema and "nextjs" code EXTREMELY minimal and compressed (under 30 lines). Skip all boilerplate. 
       
-      Output ONLY a raw, valid JSON object with NO markdown formatting. It must match this exact structure:
+      Output ONLY a raw, valid JSON object with NO markdown formatting:
       {
         "appName": "Name of the App",
-        "database": {
-          "schema": "Raw Supabase PostgreSQL code for tables and RLS."
-        },
+        "database": { "schema": "Minimal SQL here" },
         "nextjs": {
-          "components": [
-            { "filename": "page.tsx", "code": "Concise Next.js React/Tailwind code." }
-          ]
+          "components": [ { "filename": "page.tsx", "code": "Minimal React code here" } ]
         },
         "pages": [
           {
             "slug": "index",
             "blocks": [
               { "type": "hero", "headline": "High-impact title", "subhead": "Compelling subtitle" },
-              { "type": "features", "items": [{ "title": "Feature 1", "description": "Detail" }] },
+              { "type": "features", "items": [{ "title": "Feature", "description": "Detail" }] },
               { "type": "text", "content": "Detailed text content" }
             ]
           }
@@ -55,10 +52,10 @@ export async function POST(req: Request) {
       }
     `;
 
-    // --- THE FIX: Increased max_tokens to 8192 ---
+    // Reduced max_tokens to ensure it forces a faster generation
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6", 
-      max_tokens: 8192, 
+      max_tokens: 3000, 
       system: systemPrompt,
       messages: [{ role: "user", content: prompt }],
     });
@@ -77,7 +74,7 @@ export async function POST(req: Request) {
       p_project_id: projectId,
       p_owner_id: user.id,
       p_snapshot: snapshot,
-      p_note: "Next.js + Supabase Build",
+      p_note: "Speed-Optimized Next.js Build",
       p_model: "claude-sonnet-4-6"
     });
 
