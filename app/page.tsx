@@ -1,6 +1,5 @@
 /* FILE: app/page.tsx
-   BUILDLIO.SITE — Core Application
-   Implements: Landing, Auth, Builder, Version History, Credit Protection, and Preview.
+   BUILDLIO.SITE — Core Application (With Working Export)
 */
 
 "use client";
@@ -17,19 +16,16 @@ type ViewState = "landing" | "auth" | "builder" | "pricing";
 export default function BuildlioApp() {
   const [view, setView] = useState<ViewState>("landing");
 
-  // Supabase Client
   const supabase = useMemo(() => createBrowserClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
   ), []);
 
-  // Auth State
   const [user, setUser] = useState<{ email?: string; id?: string } | null>(null);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [authStatus, setAuthStatus] = useState("");
 
-  // Builder State
   const [projectId, setProjectId] = useState("");
   const [prompt, setPrompt] = useState("");
   const [note, setNote] = useState("");
@@ -38,11 +34,9 @@ export default function BuildlioApp() {
   const [history, setHistory] = useState<any[]>([]);
   const [activePageSlug, setActivePageSlug] = useState("index");
   
-  // Credit & Error State
   const [creditBalance, setCreditBalance] = useState(10);
   const [systemMessage, setSystemMessage] = useState<{ text: string; type: "error" | "success" | "info" } | null>(null);
 
-  // Initialize Auth
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => {
       setUser(data?.user ? { email: data.user.email, id: data.user.id } : null);
@@ -53,7 +47,6 @@ export default function BuildlioApp() {
     return () => subscription.unsubscribe();
   }, [supabase]);
 
-  // Fetch History
   useEffect(() => {
     if (view === "builder" && projectId) fetchHistory();
   }, [projectId, view]);
@@ -63,7 +56,6 @@ export default function BuildlioApp() {
     if (data) setHistory(data);
   }
 
-  // Auth Functions
   async function handleAuth() {
     setAuthStatus("Authenticating...");
     const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password: loginPassword });
@@ -71,14 +63,54 @@ export default function BuildlioApp() {
     else { setAuthStatus(""); setView("builder"); }
   }
 
-  // Core Generation Loop
+  // EXPORT HTML FUNCTION
+  function exportHTML() {
+    if (!snapshot) return;
+    const currentPage = snapshot.pages?.find((p: any) => p.slug === activePageSlug) || snapshot.pages?.[0];
+    if (!currentPage) return;
+
+    let htmlContent = `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>${snapshot.appName || currentPage.slug}</title>\n<script src="https://cdn.tailwindcss.com"></script>\n</head>\n<body class="bg-slate-50 text-slate-900 font-sans">\n`;
+
+    currentPage.blocks?.forEach((block: any) => {
+      if (block.type === 'hero') {
+        htmlContent += `<div class="py-24 px-10 text-center bg-white"><h1 class="text-5xl md:text-6xl font-black tracking-tight mb-6">${block.headline}</h1><p class="text-xl text-slate-600 max-w-2xl mx-auto">${block.subhead}</p><button class="mt-8 bg-slate-900 text-white px-8 py-4 rounded-full font-bold shadow-xl">${block.cta?.label || "Get Started"}</button></div>\n`;
+      } else if (block.type === 'features') {
+        htmlContent += `<div class="py-20 px-10 max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">`;
+        block.items?.forEach((item: any) => {
+          htmlContent += `<div class="p-8 bg-slate-50 border border-slate-100 rounded-3xl"><h3 class="text-xl font-bold mb-3">${item.title}</h3><p class="text-slate-600 leading-relaxed">${item.description}</p></div>`;
+        });
+        htmlContent += `</div>\n`;
+      } else if (block.type === 'text') {
+        htmlContent += `<div class="max-w-3xl mx-auto py-16 px-10 prose prose-lg prose-slate">${block.content}</div>\n`;
+      } else if (block.type === 'cta') {
+        htmlContent += `<div class="py-20 px-10 bg-indigo-600 text-white text-center"><h2 class="text-4xl font-black mb-4">${block.headline}</h2><p class="text-lg text-indigo-100 max-w-2xl mx-auto mb-8">${block.subhead}</p><button class="bg-white text-indigo-600 px-8 py-4 rounded-full font-bold shadow-lg">${block.cta?.label || "Click Here"}</button></div>\n`;
+      } else if (block.type === 'testimonials') {
+        htmlContent += `<div class="py-20 px-10 max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8">`;
+        block.items?.forEach((item: any) => {
+          htmlContent += `<div class="p-8 bg-white border border-slate-100 shadow-sm rounded-2xl italic">"${item.quote}"<div class="mt-4 font-bold not-italic text-sm text-slate-900">— ${item.name}</div></div>`;
+        });
+        htmlContent += `</div>\n`;
+      }
+    });
+
+    htmlContent += `</body>\n</html>`;
+
+    const blob = new Blob([htmlContent], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${currentPage.slug}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   async function runBuild() {
     if (creditBalance <= 0) {
       setSystemMessage({ text: "No credits remaining. Upgrade or purchase more.", type: "error" });
       return;
     }
     if (!prompt.trim()) {
-      setSystemMessage({ text: "Prompt required. Please describe what you want to build.", type: "info" });
+      setSystemMessage({ text: "Prompt required. Please type in the bottom box.", type: "info" });
       return;
     }
 
@@ -86,7 +118,6 @@ export default function BuildlioApp() {
     setSystemMessage({ text: "Compiling snapshot...", type: "info" });
 
     try {
-      // 1. Ensure Project Exists
       let currentPid = projectId;
       if (!currentPid) {
         if (!user) throw new Error("Not authenticated (no credits charged). Please log in.");
@@ -98,7 +129,6 @@ export default function BuildlioApp() {
         setProjectId(currentPid);
       }
 
-      // 2. Call AI
       const res = await fetch("/api/claude-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -114,7 +144,6 @@ export default function BuildlioApp() {
         throw new Error(`${data.error || "Server error"} (no credits charged).`);
       }
 
-      // 3. Success State
       setSnapshot(data.snapshot);
       setCreditBalance(prev => prev - 1);
       setSystemMessage({ text: "Build succeeded and version saved.", type: "success" });
@@ -127,7 +156,6 @@ export default function BuildlioApp() {
     }
   }
 
-  // UI Components
   const TopNav = () => (
     <nav className="h-16 shrink-0 border-b border-white/10 bg-[#050505] flex items-center justify-between px-6 z-50">
       <div className="flex items-center gap-8">
@@ -166,15 +194,9 @@ export default function BuildlioApp() {
         {view === "landing" && (
           <div className="h-full overflow-y-auto p-10 md:p-20 bg-[radial-gradient(#ffffff0a_1px,transparent_1px)] [background-size:24px_24px]">
             <div className="max-w-4xl mx-auto text-center space-y-8 mt-10">
-              <div className="inline-block px-4 py-1.5 rounded-full border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 font-bold text-sm tracking-wide uppercase">
-                AI-First Website Builder
-              </div>
-              <h1 className="text-6xl md:text-8xl font-black text-white tracking-tight leading-tight">
-                Prompt to Production <br/><span className="text-cyan-500">in Seconds.</span>
-              </h1>
-              <p className="text-xl text-slate-400 max-w-2xl mx-auto leading-relaxed">
-                Turn plain-language prompts into validated, structured website blueprints. Get structured control, version history, and clean exportable output without the unpredictable "AI HTML" mess.
-              </p>
+              <div className="inline-block px-4 py-1.5 rounded-full border border-cyan-500/30 bg-cyan-500/10 text-cyan-400 font-bold text-sm tracking-wide uppercase">AI-First Website Builder</div>
+              <h1 className="text-6xl md:text-8xl font-black text-white tracking-tight leading-tight">Prompt to Production <br/><span className="text-cyan-500">in Seconds.</span></h1>
+              <p className="text-xl text-slate-400 max-w-2xl mx-auto leading-relaxed">Turn plain-language prompts into validated, structured website blueprints.</p>
               <div className="flex justify-center gap-4 pt-8">
                 <button onClick={() => user ? setView("builder") : setView("auth")} className="px-8 py-4 bg-cyan-500 text-black rounded-xl font-black text-lg hover:bg-cyan-400 transition-all shadow-[0_0_30px_rgba(6,182,212,0.3)]">Start Building</button>
                 <button onClick={() => setView("pricing")} className="px-8 py-4 bg-white/5 border border-white/10 text-white rounded-xl font-bold text-lg hover:bg-white/10 transition-all">View Plans</button>
@@ -231,11 +253,10 @@ export default function BuildlioApp() {
             
             {/* LEFT PANEL: CONTROLS */}
             <aside className="w-[400px] border-r border-white/10 bg-[#050505] flex flex-col shadow-2xl z-10">
-              
-              {/* Settings & Status */}
               <div className="p-4 border-b border-white/10 bg-[#0a0a0f] space-y-3">
                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Project Context</div>
-                <input value={projectId} onChange={e => setProjectId(e.target.value)} placeholder="Project ID (Auto if blank)" className="w-full bg-[#050505] border border-white/10 rounded px-3 py-2 text-xs font-mono text-white focus:border-cyan-500 outline-none" />
+                {/* Fixed the placeholder to be clearer! */}
+                <input value={projectId} onChange={e => setProjectId(e.target.value)} placeholder="Leave blank to create NEW project" className="w-full bg-[#050505] border border-white/10 rounded px-3 py-2 text-xs font-mono text-white focus:border-cyan-500 outline-none" />
                 {systemMessage && (
                   <div className={`p-3 rounded-lg text-xs font-mono border ${systemMessage.type === 'error' ? 'bg-red-500/10 border-red-500/20 text-red-400' : systemMessage.type === 'success' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-cyan-500/10 border-cyan-500/20 text-cyan-400'}`}>
                     {systemMessage.text}
@@ -243,7 +264,6 @@ export default function BuildlioApp() {
                 )}
               </div>
 
-              {/* Version History */}
               <div className="flex-1 overflow-y-auto p-4 bg-[#020202]">
                 <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-3">Version History</div>
                 {history.length === 0 ? (
@@ -263,10 +283,10 @@ export default function BuildlioApp() {
                 )}
               </div>
 
-              {/* Chat / Input */}
+              {/* Chat Input at the bottom */}
               <div className="p-4 border-t border-white/10 bg-[#0a0a0f] space-y-3">
                 <input value={note} onChange={e => setNote(e.target.value)} placeholder="Revision Note (Optional)" className="w-full bg-[#050505] border border-white/10 rounded px-3 py-2 text-xs font-mono text-white focus:border-cyan-500 outline-none" />
-                <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Describe the site or edits..." className="w-full bg-[#050505] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-cyan-500 outline-none resize-none h-24" disabled={isRunning} />
+                <textarea value={prompt} onChange={e => setPrompt(e.target.value)} placeholder="Type prompt here (e.g. 'Create a dog breeder site')" className="w-full bg-[#050505] border border-white/10 rounded-xl px-4 py-3 text-sm text-white focus:border-cyan-500 outline-none resize-none h-24" disabled={isRunning} />
                 <button onClick={runBuild} disabled={isRunning} className={`w-full py-3 rounded-xl font-black text-sm uppercase tracking-wider transition-all ${isRunning ? "bg-cyan-900/30 text-cyan-600 cursor-not-allowed" : "bg-cyan-500 text-black hover:bg-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.3)]"}`}>
                   {isRunning ? "Generating Snapshot..." : "Run Build"}
                 </button>
@@ -275,7 +295,6 @@ export default function BuildlioApp() {
 
             {/* RIGHT PANEL: PREVIEW */}
             <main className="flex-1 bg-[#f8fafc] flex flex-col relative">
-              {/* Preview Header */}
               <header className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-4 z-10 shadow-sm">
                 <div className="flex gap-2">
                   {snapshot?.pages?.map((p: any) => (
@@ -285,19 +304,21 @@ export default function BuildlioApp() {
                   ))}
                 </div>
                 <div className="flex gap-2">
-                  <button className="text-xs font-bold text-slate-500 hover:text-slate-900 border border-slate-200 px-3 py-1.5 rounded">Export HTML</button>
-                  <button className="text-xs font-bold bg-slate-900 text-white px-3 py-1.5 rounded">Publish</button>
+                  {/* EXPORT HTML IS NOW CLICKABLE */}
+                  <button onClick={exportHTML} disabled={!snapshot} className={`text-xs font-bold px-3 py-1.5 rounded border transition-colors ${snapshot ? "text-slate-900 border-slate-300 hover:bg-slate-50" : "text-slate-400 border-slate-200 cursor-not-allowed"}`}>
+                    Export HTML
+                  </button>
+                  <button className="text-xs font-bold bg-slate-900 text-white px-3 py-1.5 rounded hover:bg-slate-800">Publish</button>
                 </div>
               </header>
 
-              {/* Canvas Rendering */}
               <div className="flex-1 overflow-y-auto bg-slate-50 text-slate-900">
                 {!snapshot ? (
                   <div className="h-full flex items-center justify-center bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:24px_24px]">
                     <div className="text-center text-slate-400">
                       <div className="text-4xl mb-2 font-black">⬡</div>
                       <p className="text-sm font-bold">Canvas Empty</p>
-                      <p className="text-xs mt-1 max-w-xs mx-auto">Write a prompt and run a build to generate a structural JSON snapshot.</p>
+                      <p className="text-xs mt-1 max-w-xs mx-auto">Type your prompt in the bottom left box to generate a site.</p>
                     </div>
                   </div>
                 ) : (
@@ -305,12 +326,10 @@ export default function BuildlioApp() {
                     {snapshot.pages?.find((p: any) => p.slug === activePageSlug)?.blocks?.map((block: any, i: number) => (
                       <div key={i} className="group relative border-b border-slate-200 hover:border-indigo-300 transition-colors">
                         
-                        {/* Editor Overlay (Block-level edits UI) */}
                         <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity flex gap-2 z-10">
                           <button className="bg-white border border-slate-200 shadow-sm text-[10px] font-bold px-2 py-1 rounded text-slate-600 hover:text-indigo-600">Edit Block</button>
                         </div>
 
-                        {/* Block: Hero */}
                         {block.type === 'hero' && (
                           <div className="py-24 px-10 text-center bg-white">
                             <h1 className="text-5xl md:text-6xl font-black tracking-tight mb-6">{block.headline}</h1>
@@ -319,7 +338,6 @@ export default function BuildlioApp() {
                           </div>
                         )}
 
-                        {/* Block: Features */}
                         {block.type === 'features' && (
                           <div className="py-20 px-10 max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">
                             {block.items?.map((item: any, j: number) => (
@@ -331,14 +349,12 @@ export default function BuildlioApp() {
                           </div>
                         )}
 
-                        {/* Block: Text */}
                         {block.type === 'text' && (
                           <div className="max-w-3xl mx-auto py-16 px-10 prose prose-lg prose-slate">
                             {block.content}
                           </div>
                         )}
 
-                        {/* Block: CTA */}
                         {block.type === 'cta' && (
                           <div className="py-20 px-10 bg-indigo-600 text-white text-center">
                             <h2 className="text-4xl font-black mb-4">{block.headline}</h2>
@@ -347,7 +363,6 @@ export default function BuildlioApp() {
                           </div>
                         )}
 
-                        {/* Block: Testimonials */}
                         {block.type === 'testimonials' && (
                           <div className="py-20 px-10 max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-2 gap-8">
                             {block.items?.map((item: any, j: number) => (
@@ -371,4 +386,5 @@ export default function BuildlioApp() {
       </main>
     </div>
   );
+}
 }
