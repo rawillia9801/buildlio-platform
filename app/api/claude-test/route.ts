@@ -24,27 +24,29 @@ export async function POST(req: Request) {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
-    // --- THE NEXT.JS + SUPABASE SYSTEM PROMPT ---
+    // --- THE FIX: Added strict conciseness rules to the prompt ---
     const systemPrompt = `
       You are an elite Next.js and Supabase full-stack engineer. 
       The user wants a high-end, modern web application.
+      
+      CRITICAL: You must keep all code highly concise. Do not write unnecessary boilerplate or explanatory comments. If you write too much, the JSON will truncate and the system will crash.
       
       Output ONLY a raw, valid JSON object with NO markdown formatting. It must match this exact structure:
       {
         "appName": "Name of the App",
         "database": {
-          "schema": "Write the raw Supabase PostgreSQL code here to create the necessary tables and RLS policies."
+          "schema": "Raw Supabase PostgreSQL code for tables and RLS."
         },
         "nextjs": {
           "components": [
-            { "filename": "page.tsx", "code": "Write the high-end Next.js React/Tailwind code here." }
+            { "filename": "page.tsx", "code": "Concise Next.js React/Tailwind code." }
           ]
         },
         "pages": [
           {
             "slug": "index",
             "blocks": [
-              { "type": "hero", "headline": "High-impact title", "subhead": "Compelling subtitle", "theme": "dark" },
+              { "type": "hero", "headline": "High-impact title", "subhead": "Compelling subtitle" },
               { "type": "features", "items": [{ "title": "Feature 1", "description": "Detail" }] },
               { "type": "text", "content": "Detailed text content" }
             ]
@@ -53,9 +55,10 @@ export async function POST(req: Request) {
       }
     `;
 
+    // --- THE FIX: Increased max_tokens to 8192 ---
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6", 
-      max_tokens: 4000,
+      max_tokens: 8192, 
       system: systemPrompt,
       messages: [{ role: "user", content: prompt }],
     });
