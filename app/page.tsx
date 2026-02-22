@@ -1,14 +1,13 @@
 /* FILE: app/page.tsx
-BUILDLIO.SITE — v5.4: Build-Type Rendering (Documents vs Website) + Correct Export
+BUILDLIO.SITE — v5.5: Vision Splash Flow (White → Ripple → Intro → White → Question → White → Buoy Options) + Document Mode Preview/Export
 
 CHANGELOG
-- v5.4
-  * FIX: Documents build now renders a document preview (not a website placeholder)
-  * NEW: Document snapshot support (snapshot.documents[])
-  * NEW: Export Document (HTML) when buildType=document
-  * KEEP: Website/store/landing/application/other render website preview + export full HTML
-  * KEEP: Splash choice -> buildType wiring
-  * KEEP: White build console, tabs, history, credits badge
+- v5.5
+  * NEW: Vision-accurate splash choreography (white screen beats + wavy ripple + buoy pop options)
+  * NEW: “Sync / sploosh” selection animation + white reset between steps
+  * NEW: Second-step chooser (e.g., Documents → document type options) before login/builder
+  * KEEP: v5.4 build-type rendering (Documents vs Website) + correct export
+  * KEEP: Splash choice -> buildType wiring, white build console, tabs, history, credits badge
   * KEEP: Input stability (memoized preview)
 
 ANCHOR:CONFIG
@@ -93,83 +92,100 @@ function isSiteSnapshot(s: AnySnapshot | null): s is SiteSnapshot {
 }
 
 /* ------------------------------------------------
-ANCHOR:SPLASH — (unchanged)
+ANCHOR:VISION_SPLASH
+White → Ripple → “I’m Buildio…” → White → “Let’s turn…” → White → Buoy options
 --------------------------------------------------- */
-function BuildlioSplash({ onSelect }: { onSelect: (choice: BuildChoice) => void }) {
+function VisionSplash({
+  onSelectBuildChoice,
+}: {
+  onSelectBuildChoice: (choice: BuildChoice, meta: { clickX: number; clickY: number }) => void;
+}) {
   const choices: Array<{ label: BuildChoice; desc: string }> = [
     { label: "Website", desc: "A full professional website with pages, sections, and polish." },
     { label: "Application", desc: "A product-style build with screens, flow, and structure." },
     { label: "Documents", desc: "Letters, contracts, policies — clean and professional." },
-    { label: "Store", desc: "A conversion-focused product landing experience." },
+    { label: "Store", desc: "A conversion-focused product experience." },
     { label: "Landing Page", desc: "One high-performing page for an offer or campaign." },
-    { label: "Other", desc: "Anything else — you describe it, I’ll shape it." },
+    { label: "Other", desc: "Anything else — describe it and I’ll shape it." },
   ];
 
-  const [phase, setPhase] = useState<0 | 1 | 2 | 3 | 4 | 5>(0);
+  // 0 white
+  // 1 ripple starts
+  // 2 show line 1
+  // 3 white beat
+  // 4 show line 2
+  // 5 white beat
+  // 6 show options
+  // 7 exiting
+  const [phase, setPhase] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6 | 7>(0);
 
-  const line1Full =
-    "Hi! I’m Buildlio — your AI chat builder. Let’s turn your dream into a reality. What are we creating today?";
-  const line2Full = "I’ll guide you step-by-step.";
+  const line1Full = "I’m Buildio, your AI chat builder.";
+  const line2Full = "Let’s turn your dreams into reality. What are you creating today?";
 
   const [typed1, setTyped1] = useState("");
   const [typed2, setTyped2] = useState("");
-  const [cornerRippleOn, setCornerRippleOn] = useState(false);
-  const [isExiting, setIsExiting] = useState(false);
-  const [sinkKey, setSinkKey] = useState<string | null>(null);
+  const [ripplesOn, setRipplesOn] = useState(false);
 
   const rootRef = useRef<HTMLDivElement>(null);
-  const origin = useMemo(() => ({ x: 92, y: 16 }), []);
-  const [sploosh, setSploosh] = useState<{ x: number; y: number; active: boolean }>({
-    x: origin.x,
-    y: origin.y,
-    active: false,
-  });
+
+  const [isExiting, setIsExiting] = useState(false);
+  const [sinkKey, setSinkKey] = useState<string | null>(null);
+  const [sploosh, setSploosh] = useState<{ x: number; y: number; active: boolean }>({ x: 70, y: 22, active: false });
+  const [whiteWash, setWhiteWash] = useState(false);
 
   useEffect(() => {
     let alive = true;
     (async () => {
-      await sleep(650);
+      // pure white beat
+      await sleep(360);
       if (!alive) return;
 
       setPhase(1);
-      setCornerRippleOn(true);
+      setRipplesOn(true);
 
-      await sleep(700);
+      // small attention ripple before text
+      await sleep(520);
       if (!alive) return;
 
       setPhase(2);
 
-      const hi = "Hi!";
-      for (let i = 1; i <= hi.length; i++) {
+      // type line 1
+      for (let i = 1; i <= line1Full.length; i++) {
         if (!alive) return;
-        setTyped1(hi.slice(0, i));
-        await sleep(34);
+        setTyped1(line1Full.slice(0, i));
+        await sleep(22);
       }
 
+      // white beat
       await sleep(520);
       if (!alive) return;
 
-      const rest = line1Full.slice(hi.length);
-      for (let i = 1; i <= rest.length; i++) {
-        if (!alive) return;
-        setTyped1(hi + rest.slice(0, i));
-        await sleep(26);
-      }
-
-      await sleep(420);
-      if (!alive) return;
-
       setPhase(3);
+      setWhiteWash(true);
+      await sleep(220);
+      if (!alive) return;
+      setWhiteWash(false);
+
+      // show line 2 typed
+      setPhase(4);
       for (let i = 1; i <= line2Full.length; i++) {
         if (!alive) return;
         setTyped2(line2Full.slice(0, i));
-        await sleep(24);
+        await sleep(18);
       }
 
-      await sleep(380);
+      // white beat before options
+      await sleep(420);
       if (!alive) return;
 
-      setPhase(4);
+      setPhase(5);
+      setWhiteWash(true);
+      await sleep(240);
+      if (!alive) return;
+      setWhiteWash(false);
+
+      // buoy options pop
+      setPhase(6);
     })();
 
     return () => {
@@ -181,17 +197,21 @@ function BuildlioSplash({ onSelect }: { onSelect: (choice: BuildChoice) => void 
     if (isExiting) return;
 
     const rect = rootRef.current?.getBoundingClientRect();
-    const cx = rect ? ((ev.clientX - rect.left) / rect.width) * 100 : origin.x;
-    const cy = rect ? ((ev.clientY - rect.top) / rect.height) * 100 : origin.y;
+    const cx = rect ? ((ev.clientX - rect.left) / rect.width) * 100 : 70;
+    const cy = rect ? ((ev.clientY - rect.top) / rect.height) * 100 : 22;
 
     setSinkKey(choice);
     setSploosh({ x: clamp(cx, 6, 94), y: clamp(cy, 6, 94), active: true });
 
-    setPhase(5);
     setIsExiting(true);
+    setPhase(7);
 
-    await sleep(720);
-    onSelect(choice);
+    // let sploosh breathe
+    await sleep(520);
+    setWhiteWash(true);
+    await sleep(260);
+
+    onSelectBuildChoice(choice, { clickX: clamp(cx, 6, 94), clickY: clamp(cy, 6, 94) });
   };
 
   return (
@@ -200,22 +220,17 @@ function BuildlioSplash({ onSelect }: { onSelect: (choice: BuildChoice) => void 
       className="fixed inset-0 z-[9999] bg-white text-zinc-900 overflow-hidden"
       style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
     >
-      {cornerRippleOn && (
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={
-            {
-              ["--cx" as any]: `${origin.x}%`,
-              ["--cy" as any]: `${origin.y}%`,
-            } as React.CSSProperties
-          }
-        >
-          <div className="corner-ripple corner-ripple-1" />
-          <div className="corner-ripple corner-ripple-2" />
-          <div className="corner-ripple corner-ripple-3" />
+      {/* Wavy attention ripples */}
+      {ripplesOn && (
+        <div className="absolute inset-0 pointer-events-none">
+          <div className="wavy-field" />
+          <div className="wavy-ripple wavy-ripple-1" />
+          <div className="wavy-ripple wavy-ripple-2" />
+          <div className="wavy-ripple wavy-ripple-3" />
         </div>
       )}
 
+      {/* Sploosh / sync */}
       {sploosh.active && (
         <div
           className="absolute inset-0 pointer-events-none"
@@ -233,31 +248,38 @@ function BuildlioSplash({ onSelect }: { onSelect: (choice: BuildChoice) => void 
         </div>
       )}
 
+      {/* White beat overlay */}
+      <div
+        className={`absolute inset-0 pointer-events-none bg-white transition-opacity duration-250 ${whiteWash ? "opacity-100" : "opacity-0"}`}
+      />
+
       <div className="relative h-full w-full flex items-center justify-center px-6">
         <div className="w-full max-w-5xl">
-          <div className="min-h-[170px]">
-            {phase >= 2 && (
+          <div className="min-h-[150px]">
+            {(phase === 2 || phase === 3) && (
+              <div className="text-zinc-900">
+                <div className="text-5xl md:text-6xl font-black tracking-[-0.05em] leading-[1.05]">
+                  {typed1}
+                  <span className={`caret ${phase === 2 ? "caret-on" : "caret-off"}`} />
+                </div>
+              </div>
+            )}
+
+            {(phase === 4 || phase === 5 || phase === 6 || phase === 7) && (
               <div className="text-zinc-900">
                 <div className="text-4xl md:text-5xl font-black tracking-[-0.045em] leading-[1.08]">
-                  {typed1}
-                  <span className={`caret ${phase < 4 ? "caret-on" : "caret-off"}`} />
+                  {typed2}
+                  <span className={`caret ${phase === 4 ? "caret-on" : "caret-off"}`} />
                 </div>
-
-                {phase >= 3 && (
-                  <div className="mt-6 text-xl md:text-2xl font-semibold text-zinc-600 tracking-[-0.01em]">
-                    {typed2}
-                  </div>
-                )}
+                <div className="mt-5 text-lg md:text-xl font-semibold text-zinc-600 tracking-[-0.01em]">
+                  Choose one — I’ll guide you step-by-step.
+                </div>
               </div>
             )}
           </div>
 
-          {phase >= 4 && (
-            <div
-              className={`mt-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 ${
-                isExiting ? "choices-exiting" : "choices-enter"
-              }`}
-            >
+          {phase >= 6 && (
+            <div className={`mt-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 ${isExiting ? "choices-exiting" : "choices-enter"}`}>
               {choices.map((c, idx) => {
                 const sinking = sinkKey === c.label && isExiting;
                 return (
@@ -268,6 +290,7 @@ function BuildlioSplash({ onSelect }: { onSelect: (choice: BuildChoice) => void 
                     className={[
                       "choice-card",
                       `delay-${idx}`,
+                      "buoy-pop",
                       sinking ? "choice-sink" : "",
                       isExiting && !sinking ? "choice-fade" : "",
                     ].join(" ")}
@@ -314,49 +337,91 @@ function BuildlioSplash({ onSelect }: { onSelect: (choice: BuildChoice) => void 
           }
         }
 
-        .corner-ripple {
+        /* Wavy, attention-grabbing ripple field */
+        .wavy-field {
           position: absolute;
-          left: var(--cx);
-          top: var(--cy);
-          transform: translate(-50%, -50%);
-          border-radius: 999px;
-          border: 2px solid rgba(0, 0, 0, 0.07);
-          opacity: 0;
-          width: 18px;
-          height: 18px;
-          animation: corner 1.55s ease-out infinite;
+          inset: 0;
+          background:
+            radial-gradient(circle at 20% 25%, rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0) 42%),
+            radial-gradient(circle at 78% 30%, rgba(0, 0, 0, 0.05), rgba(255, 255, 255, 0) 45%),
+            radial-gradient(circle at 52% 78%, rgba(0, 0, 0, 0.045), rgba(255, 255, 255, 0) 48%);
+          filter: blur(0.2px);
+          opacity: 1;
+          animation: drift 2.6s ease-in-out infinite;
         }
-        .corner-ripple-2 {
-          animation-delay: 0.25s;
-          border-color: rgba(0, 0, 0, 0.055);
-        }
-        .corner-ripple-3 {
-          animation-delay: 0.5s;
-          border-color: rgba(0, 0, 0, 0.04);
-        }
-        @keyframes corner {
+        @keyframes drift {
           0% {
-            transform: translate(-50%, -50%) scale(0.35);
-            opacity: 0;
+            transform: translate3d(0, 0, 0) scale(1);
           }
-          16% {
-            opacity: 0.6;
+          50% {
+            transform: translate3d(-6px, 4px, 0) scale(1.01);
           }
           100% {
-            transform: translate(-50%, -50%) scale(10.5);
+            transform: translate3d(0, 0, 0) scale(1);
+          }
+        }
+
+        .wavy-ripple {
+          position: absolute;
+          left: 76%;
+          top: 22%;
+          transform: translate(-50%, -50%);
+          width: 18px;
+          height: 18px;
+          border-radius: 999px;
+          opacity: 0;
+          background: conic-gradient(
+            from 180deg,
+            rgba(0, 0, 0, 0.1),
+            rgba(0, 0, 0, 0.02),
+            rgba(0, 0, 0, 0.08),
+            rgba(0, 0, 0, 0.02),
+            rgba(0, 0, 0, 0.1)
+          );
+          filter: blur(0.4px);
+          animation: wavy 1.7s ease-out infinite;
+          mask: radial-gradient(circle at center, transparent 52%, black 56%);
+        }
+        .wavy-ripple-2 {
+          animation-delay: 0.26s;
+          opacity: 0.9;
+        }
+        .wavy-ripple-3 {
+          animation-delay: 0.52s;
+          opacity: 0.75;
+        }
+        @keyframes wavy {
+          0% {
+            transform: translate(-50%, -50%) scale(0.35) rotate(0deg);
+            opacity: 0;
+          }
+          14% {
+            opacity: 0.75;
+          }
+          100% {
+            transform: translate(-50%, -50%) scale(11.5) rotate(28deg);
             opacity: 0;
           }
         }
 
-        .choices-enter .choice-card {
+        /* Buoy pop (underwater → pop up) */
+        .choices-enter .buoy-pop {
           opacity: 0;
-          transform: translateY(18px);
-          animation: floatUp 680ms cubic-bezier(0.2, 0.9, 0.2, 1) forwards;
+          transform: translateY(44px) scale(0.96);
+          animation: buoy 760ms cubic-bezier(0.2, 0.95, 0.18, 1) forwards;
         }
-        @keyframes floatUp {
-          to {
+        @keyframes buoy {
+          0% {
+            opacity: 0;
+            transform: translateY(44px) scale(0.96);
+          }
+          60% {
             opacity: 1;
-            transform: translateY(0);
+            transform: translateY(-6px) scale(1.01);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
           }
         }
 
@@ -364,19 +429,19 @@ function BuildlioSplash({ onSelect }: { onSelect: (choice: BuildChoice) => void 
           animation-delay: 0ms;
         }
         .delay-1 {
-          animation-delay: 90ms;
+          animation-delay: 95ms;
         }
         .delay-2 {
-          animation-delay: 180ms;
+          animation-delay: 190ms;
         }
         .delay-3 {
-          animation-delay: 270ms;
+          animation-delay: 285ms;
         }
         .delay-4 {
-          animation-delay: 360ms;
+          animation-delay: 380ms;
         }
         .delay-5 {
-          animation-delay: 450ms;
+          animation-delay: 475ms;
         }
 
         .choice-card {
@@ -454,8 +519,362 @@ function BuildlioSplash({ onSelect }: { onSelect: (choice: BuildChoice) => void 
         }
 
         .choice-fade {
-          opacity: 0.35 !important;
-          transform: translateY(8px) scale(0.99) !important;
+          opacity: 0.25 !important;
+          transform: translateY(10px) scale(0.99) !important;
+        }
+
+        /* Sploosh rings */
+        .sploosh-ring {
+          position: absolute;
+          left: var(--sx);
+          top: var(--sy);
+          width: 12px;
+          height: 12px;
+          transform: translate(-50%, -50%) scale(0.2);
+          border-radius: 999px;
+          border: 2px solid rgba(0, 0, 0, 0.11);
+          opacity: 0;
+          animation: ring 720ms ease-out forwards;
+        }
+        .sploosh-ring-2 {
+          animation-delay: 110ms;
+          border-color: rgba(0, 0, 0, 0.085);
+        }
+        .sploosh-ring-3 {
+          animation-delay: 200ms;
+          border-color: rgba(0, 0, 0, 0.06);
+        }
+        @keyframes ring {
+          0% {
+            transform: translate(-50%, -50%) scale(0.2);
+            opacity: 0;
+          }
+          12% {
+            opacity: 0.55;
+          }
+          100% {
+            transform: translate(-50%, -50%) scale(86);
+            opacity: 0;
+          }
+        }
+        .sploosh-wash {
+          position: absolute;
+          inset: 0;
+          background: radial-gradient(
+            circle at var(--sx) var(--sy),
+            rgba(0, 0, 0, 0.055),
+            rgba(0, 0, 0, 0.018) 18%,
+            rgba(255, 255, 255, 0) 50%
+          );
+          animation: wash 720ms ease-out forwards;
+          opacity: 0;
+        }
+        @keyframes wash {
+          0% {
+            opacity: 0;
+          }
+          18% {
+            opacity: 1;
+          }
+          100% {
+            opacity: 0;
+          }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+/* ------------------------------------------------
+ANCHOR:STEP_2_CHOOSER
+Second white step: “What kind of X are we creating today?” + buoy options + sploosh
+--------------------------------------------------- */
+type Step2Selection =
+  | { kind: "document"; category: DocumentItem["category"] }
+  | { kind: "website"; subtype: "service" | "portfolio" | "community" | "local" | "agency" | "other" }
+  | { kind: "application"; subtype: "portal" | "dashboard" | "crm" | "inventory" | "booking" | "other" }
+  | { kind: "store"; subtype: "products" | "digital" | "subscriptions" | "services" | "drops" | "other" }
+  | { kind: "landing_page"; subtype: "lead" | "waitlist" | "booking" | "event" | "launch" | "other" }
+  | { kind: "other"; subtype: "other" };
+
+function Step2Chooser({
+  buildType,
+  onComplete,
+}: {
+  buildType: BuildType;
+  onComplete: (sel: Step2Selection) => void;
+}) {
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [phase, setPhase] = useState<0 | 1 | 2 | 3>(0); // 0 white, 1 question, 2 options, 3 exiting
+  const [isExiting, setIsExiting] = useState(false);
+  const [sinkKey, setSinkKey] = useState<string | null>(null);
+  const [sploosh, setSploosh] = useState<{ x: number; y: number; active: boolean }>({ x: 50, y: 50, active: false });
+  const [whiteWash, setWhiteWash] = useState(true);
+
+  const question = useMemo(() => {
+    if (buildType === "document") return "What kind of document are we creating today?";
+    if (buildType === "website") return "What kind of website are we creating today?";
+    if (buildType === "application") return "What kind of application are we creating today?";
+    if (buildType === "store") return "What kind of store are we creating today?";
+    if (buildType === "landing_page") return "What kind of landing page are we creating today?";
+    return "What are we creating today?";
+  }, [buildType]);
+
+  const options = useMemo(() => {
+    if (buildType === "document") {
+      const items: Array<{ key: DocumentItem["category"]; label: string; desc: string }> = [
+        { key: "letter", label: "Letter", desc: "A professional letter with clear sections and placeholders." },
+        { key: "cease_and_desist", label: "Cease & Desist", desc: "Firm, professional notice with specific demands and timeline." },
+        { key: "contract", label: "Contract", desc: "A structured agreement with clauses, definitions, and signatures." },
+        { key: "policy", label: "Policy", desc: "Clear rules, responsibilities, and enforcement language." },
+        { key: "proposal", label: "Proposal", desc: "Scope, deliverables, pricing, and timeline in a client-ready format." },
+        { key: "other", label: "Other", desc: "Tell me what it is — I’ll format it like a real document." },
+      ];
+      return items.map((x) => ({ id: x.key, label: x.label, desc: x.desc }));
+    }
+    if (buildType === "website") {
+      const items = [
+        { id: "service", label: "Service Business", desc: "Bookings, calls, and trust — built to convert." },
+        { id: "local", label: "Local Business", desc: "Hours, location, services, and credibility." },
+        { id: "agency", label: "Agency", desc: "Offer, proof, case studies, and lead flow." },
+        { id: "portfolio", label: "Portfolio", desc: "Work, bio, and a clean way to get hired." },
+        { id: "community", label: "Community", desc: "Membership, updates, and clear onboarding." },
+        { id: "other", label: "Other", desc: "Describe it — I’ll architect it properly." },
+      ];
+      return items;
+    }
+    if (buildType === "application") {
+      const items = [
+        { id: "portal", label: "Portal", desc: "Login + roles + workflows — clean and practical." },
+        { id: "dashboard", label: "Dashboard", desc: "Metrics, filters, and operational clarity." },
+        { id: "booking", label: "Booking", desc: "Scheduling flow, confirmations, and rules." },
+        { id: "inventory", label: "Inventory", desc: "Items, costs, counts, and reporting structure." },
+        { id: "crm", label: "CRM", desc: "Leads, pipeline, notes, and follow-ups." },
+        { id: "other", label: "Other", desc: "Describe it — we’ll map the workflow." },
+      ];
+      return items;
+    }
+    if (buildType === "store") {
+      const items = [
+        { id: "products", label: "Physical Products", desc: "Catalog, cart cues, shipping trust, and returns." },
+        { id: "digital", label: "Digital Products", desc: "Instant delivery, licensing, and support." },
+        { id: "subscriptions", label: "Subscriptions", desc: "Plans, billing, retention, and FAQs." },
+        { id: "services", label: "Service Checkout", desc: "Packages, add-ons, and booking CTA." },
+        { id: "drops", label: "Limited Drops", desc: "Scarcity, countdown, and hype done right." },
+        { id: "other", label: "Other", desc: "Describe it — I’ll structure it." },
+      ];
+      return items;
+    }
+    if (buildType === "landing_page") {
+      const items = [
+        { id: "lead", label: "Lead Capture", desc: "Short, focused, and built for conversions." },
+        { id: "waitlist", label: "Waitlist", desc: "Pre-launch interest with clean signup." },
+        { id: "booking", label: "Booking", desc: "One clear action: schedule now." },
+        { id: "event", label: "Event", desc: "Details, agenda, and RSVP flow." },
+        { id: "launch", label: "Launch", desc: "New offer rollout with proof + objections handled." },
+        { id: "other", label: "Other", desc: "Describe it — I’ll write it like a pro." },
+      ];
+      return items;
+    }
+    return [{ id: "other", label: "Continue", desc: "Tell me what you want — I’ll guide the next step." }];
+  }, [buildType]);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      setWhiteWash(true);
+      await sleep(180);
+      if (!alive) return;
+      setWhiteWash(false);
+      setPhase(1);
+      await sleep(220);
+      if (!alive) return;
+      setPhase(2);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  const handlePick = async (id: string, ev: React.MouseEvent<HTMLButtonElement>) => {
+    if (isExiting) return;
+
+    const rect = rootRef.current?.getBoundingClientRect();
+    const cx = rect ? ((ev.clientX - rect.left) / rect.width) * 100 : 50;
+    const cy = rect ? ((ev.clientY - rect.top) / rect.height) * 100 : 50;
+
+    setSinkKey(id);
+    setSploosh({ x: clamp(cx, 6, 94), y: clamp(cy, 6, 94), active: true });
+    setIsExiting(true);
+    setPhase(3);
+
+    await sleep(520);
+    setWhiteWash(true);
+    await sleep(240);
+
+    if (buildType === "document") return onComplete({ kind: "document", category: id as DocumentItem["category"] });
+    if (buildType === "website") return onComplete({ kind: "website", subtype: id as any });
+    if (buildType === "application") return onComplete({ kind: "application", subtype: id as any });
+    if (buildType === "store") return onComplete({ kind: "store", subtype: id as any });
+    if (buildType === "landing_page") return onComplete({ kind: "landing_page", subtype: id as any });
+    return onComplete({ kind: "other", subtype: "other" });
+  };
+
+  return (
+    <div ref={rootRef} className="fixed inset-0 z-[9998] bg-white text-zinc-900 overflow-hidden">
+      {sploosh.active && (
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={
+            {
+              ["--sx" as any]: `${sploosh.x}%`,
+              ["--sy" as any]: `${sploosh.y}%`,
+            } as React.CSSProperties
+          }
+        >
+          <div className="sploosh-ring sploosh-ring-1" />
+          <div className="sploosh-ring sploosh-ring-2" />
+          <div className="sploosh-ring sploosh-ring-3" />
+          <div className="sploosh-wash" />
+        </div>
+      )}
+
+      <div
+        className={`absolute inset-0 pointer-events-none bg-white transition-opacity duration-250 ${whiteWash ? "opacity-100" : "opacity-0"}`}
+      />
+
+      <div className="relative h-full w-full flex items-center justify-center px-6">
+        <div className="w-full max-w-5xl">
+          <div className="min-h-[120px]">
+            {phase >= 1 && (
+              <div className="text-zinc-900">
+                <div className="text-4xl md:text-5xl font-black tracking-[-0.045em] leading-[1.08]">{question}</div>
+                <div className="mt-4 text-lg md:text-xl font-semibold text-zinc-600">Pick one — we’ll dial it in next.</div>
+              </div>
+            )}
+          </div>
+
+          {phase >= 2 && (
+            <div className={`mt-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 ${isExiting ? "choices-exiting" : "choices-enter"}`}>
+              {options.map((o, idx) => {
+                const sinking = sinkKey === o.id && isExiting;
+                return (
+                  <button
+                    key={o.id}
+                    onClick={(ev) => handlePick(o.id, ev)}
+                    disabled={isExiting}
+                    className={[
+                      "choice-card",
+                      `delay-${idx}`,
+                      "buoy-pop",
+                      sinking ? "choice-sink" : "",
+                      isExiting && !sinking ? "choice-fade" : "",
+                    ].join(" ")}
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="text-lg font-extrabold tracking-[-0.02em]">{o.label}</div>
+                      <div className="w-10 h-10 rounded-2xl bg-zinc-100 flex items-center justify-center text-zinc-700 font-black">
+                        →
+                      </div>
+                    </div>
+                    <div className="mt-2 text-sm text-zinc-600 leading-relaxed">{o.desc}</div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <style jsx>{`
+        .choices-enter .buoy-pop {
+          opacity: 0;
+          transform: translateY(44px) scale(0.96);
+          animation: buoy 760ms cubic-bezier(0.2, 0.95, 0.18, 1) forwards;
+        }
+        @keyframes buoy {
+          0% {
+            opacity: 0;
+            transform: translateY(44px) scale(0.96);
+          }
+          60% {
+            opacity: 1;
+            transform: translateY(-6px) scale(1.01);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
+          }
+        }
+
+        .delay-0 {
+          animation-delay: 0ms;
+        }
+        .delay-1 {
+          animation-delay: 95ms;
+        }
+        .delay-2 {
+          animation-delay: 190ms;
+        }
+        .delay-3 {
+          animation-delay: 285ms;
+        }
+        .delay-4 {
+          animation-delay: 380ms;
+        }
+        .delay-5 {
+          animation-delay: 475ms;
+        }
+
+        .choice-card {
+          position: relative;
+          text-align: left;
+          padding: 22px;
+          border-radius: 28px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          background: #fff;
+          transition: transform 260ms ease, box-shadow 260ms ease, opacity 260ms ease;
+          box-shadow: 0 10px 24px rgba(0, 0, 0, 0.06);
+        }
+        .choice-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 14px 34px rgba(0, 0, 0, 0.085);
+        }
+        .choice-card:active {
+          transform: translateY(1px);
+        }
+
+        .choice-sink {
+          transform: translateY(12px) scale(0.985) !important;
+          box-shadow: 0 6px 18px rgba(0, 0, 0, 0.05) !important;
+        }
+        .choice-sink::after {
+          content: "";
+          position: absolute;
+          inset: -2px;
+          border-radius: 30px;
+          border: 2px solid rgba(0, 0, 0, 0.1);
+          opacity: 0;
+          animation: sinkOutline 640ms ease-out forwards;
+          pointer-events: none;
+        }
+        @keyframes sinkOutline {
+          0% {
+            opacity: 0;
+            transform: scale(1);
+          }
+          18% {
+            opacity: 0.55;
+          }
+          100% {
+            opacity: 0;
+            transform: scale(1.12);
+          }
+        }
+
+        .choice-fade {
+          opacity: 0.25 !important;
+          transform: translateY(10px) scale(0.99) !important;
         }
 
         .sploosh-ring {
@@ -496,9 +915,9 @@ function BuildlioSplash({ onSelect }: { onSelect: (choice: BuildChoice) => void 
           inset: 0;
           background: radial-gradient(
             circle at var(--sx) var(--sy),
-            rgba(0, 0, 0, 0.06),
-            rgba(0, 0, 0, 0.02) 18%,
-            rgba(255, 255, 255, 0) 48%
+            rgba(0, 0, 0, 0.055),
+            rgba(0, 0, 0, 0.018) 18%,
+            rgba(255, 255, 255, 0) 50%
           );
           animation: wash 720ms ease-out forwards;
           opacity: 0;
@@ -858,7 +1277,6 @@ const DocumentPreview = memo(function DocumentPreview({
         </div>
       ) : (
         <div className="flex-1 overflow-hidden bg-zinc-200">
-          {/* Doc tabs */}
           <div className="h-14 bg-zinc-900 border-b border-white/10 flex items-center px-6 gap-2 overflow-x-auto">
             {docs.map((d) => (
               <button
@@ -873,7 +1291,6 @@ const DocumentPreview = memo(function DocumentPreview({
             ))}
           </div>
 
-          {/* Paper */}
           <div className="flex-1 overflow-auto p-8">
             <div className="mx-auto max-w-[900px] bg-white shadow-2xl rounded-2xl border border-zinc-200 overflow-hidden">
               <div className="px-10 py-8 border-b bg-zinc-50">
@@ -911,10 +1328,15 @@ Main App
 export default function BuildlioApp() {
   const [view, setView] = useState<ViewState>("landing");
 
-  // Splash control
+  // Vision splash + step2 chooser
   const [showSplash, setShowSplash] = useState(true);
+  const [showStep2, setShowStep2] = useState(false);
+
   const [firstChoice, setFirstChoice] = useState<BuildChoice | null>(null);
   const [buildType, setBuildType] = useState<BuildType>("website");
+
+  // Selection details (optional)
+  const [step2Sel, setStep2Sel] = useState<Step2Selection | null>(null);
 
   // Pending prompt to auto-send after selection/login
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
@@ -948,7 +1370,8 @@ export default function BuildlioApp() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content: "Hi, I’m Buildlio. Tell me what you’re building — and I’ll generate a polished result with a real professional structure.",
+      content:
+        "I’m Buildlio. Tell me what you’re building — and I’ll guide you with a few smart questions, then generate a polished, professional output.",
     },
   ]);
 
@@ -996,7 +1419,7 @@ export default function BuildlioApp() {
     }
   }, [view, activeTab, isRunning]);
 
-  // Auto-send pending prompt (after splash selection + after login if needed)
+  // Auto-send pending prompt (after selection/login)
   useEffect(() => {
     if (view !== "builder") return;
     if (!pendingPrompt) return;
@@ -1023,55 +1446,65 @@ export default function BuildlioApp() {
     if (!error) setView("builder");
   }
 
-  function makePrompt(choice: BuildChoice) {
+  function makePrompt(choice: BuildChoice, sel: Step2Selection | null) {
     const typeTag = `TYPE: ${choiceToBuildType(choice)}`;
 
     if (choice === "Website") {
+      const subtype = sel?.kind === "website" ? sel.subtype : "other";
       return [
         typeTag,
-        "I want a premium website.",
-        "Ask me 3 calm, smart questions (industry, audience, and #1 goal).",
+        `Website style: ${subtype}`,
+        "Start by asking me 3 calm, smart questions (industry, audience, and #1 goal).",
         "Then generate a full multi-page site with WOW-level copy: hero, benefits, credibility, testimonials, pricing, FAQ, and a strong CTA.",
         "Make the writing feel premium and specific — like a real agency wrote it.",
       ].join("\n");
     }
+
     if (choice === "Application") {
+      const subtype = sel?.kind === "application" ? sel.subtype : "other";
       return [
         typeTag,
-        "I want to build an application.",
+        `Application style: ${subtype}`,
         "Ask me: what the app does, who it’s for, and what success looks like.",
         "Then generate a polished product website: value prop, feature deep-dive, workflow, security/trust, pricing, FAQ, and onboarding CTA.",
         "Write like a top-tier product strategist — crisp and convincing.",
       ].join("\n");
     }
+
     if (choice === "Documents") {
-      // IMPORTANT: documents should produce documents, not a website
+      const cat = sel?.kind === "document" ? sel.category : "other";
       return [
         typeTag,
+        `Document type: ${cat}`,
         "I want to draft professional documents and letters (not a website).",
-        "Ask me: (1) document type (letter/cease & desist/bill of sale/health guarantee/contract/policy), (2) jurisdiction/state, (3) parties + key facts.",
+        "Ask me: (1) jurisdiction/state, (2) parties + key facts, (3) any deadlines/tone (firm vs friendly).",
         "Then generate the document as a clean, print-ready draft with headings/sections, placeholders like [Name], and a short disclaimer (not legal advice).",
         "Output should be the actual document content ready to export.",
       ].join("\n");
     }
+
     if (choice === "Store") {
+      const subtype = sel?.kind === "store" ? sel.subtype : "other";
       return [
         typeTag,
-        "I want a store / product landing experience.",
+        `Store style: ${subtype}`,
         "Ask me what I’m selling, price range, and who it’s for.",
         "Then generate a conversion-first site: hooks, benefits, proof, offers, shipping/returns trust cues, pricing, FAQ, and CTA.",
         "No fluff — make it feel ‘wow’ and trustworthy.",
       ].join("\n");
     }
+
     if (choice === "Landing Page") {
+      const subtype = sel?.kind === "landing_page" ? sel.subtype : "other";
       return [
         typeTag,
-        "I want a high-converting landing page.",
+        `Landing page style: ${subtype}`,
         "Ask me the offer, audience, and the action I want them to take.",
         "Then generate persuasive, premium copy with proof, objections, pricing, FAQ, CTA.",
         "Make it feel like an experienced copywriter did it.",
       ].join("\n");
     }
+
     return [
       typeTag,
       "I want to build something.",
@@ -1412,7 +1845,6 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
         const nextSnap: AnySnapshot = aiResponse.snapshot;
         setSnapshot(nextSnap);
 
-        // Reset selectors on new snapshots
         if (isDocSnapshot(nextSnap)) {
           const first = nextSnap.documents?.[0]?.id || "doc_1";
           setActiveDocId(first);
@@ -1443,20 +1875,37 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
 
   return (
     <div className={`${inter.variable} ${fira.variable} h-screen flex flex-col bg-zinc-950 text-zinc-200 overflow-hidden`}>
+      {/* Step 1 (vision splash) */}
       {showSplash && (
-        <BuildlioSplash
-          onSelect={(choice) => {
+        <VisionSplash
+          onSelectBuildChoice={(choice) => {
             const bt = choiceToBuildType(choice);
             setFirstChoice(choice);
             setBuildType(bt);
-            setPendingPrompt(makePrompt(choice));
-            setHasAutoSent(false);
-            setShowSplash(false);
 
+            // go to step 2 chooser (white again)
+            setShowSplash(false);
+            setShowStep2(true);
+          }}
+        />
+      )}
+
+      {/* Step 2 (type-specific “what kind of …” chooser) */}
+      {showStep2 && (
+        <Step2Chooser
+          buildType={buildType}
+          onComplete={(sel) => {
+            setStep2Sel(sel);
+            const choice = firstChoice || "Website";
+            setPendingPrompt(makePrompt(choice, sel));
+            setHasAutoSent(false);
+            setShowStep2(false);
+
+            // after chooser, route to auth/builder (white beats already handled)
             setTimeout(() => {
               if (user) setView("builder");
               else setView("auth");
-            }, 320);
+            }, 220);
           }}
         />
       )}
@@ -1501,6 +1950,9 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                   <div className="font-semibold">
                     {firstChoice} <span className="text-zinc-500">•</span> <span className="text-zinc-400">{buildType}</span>
                   </div>
+                  {step2Sel?.kind === "document" ? (
+                    <div className="mt-2 text-xs text-zinc-400">Document type: {step2Sel.category}</div>
+                  ) : null}
                 </div>
               )}
 
@@ -1650,7 +2102,6 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
             </aside>
 
             <div className="flex-1 flex flex-col">
-              {/* Top bar: Website pages OR Document export */}
               <div className="h-14 border-b border-white/10 bg-zinc-900 flex items-center px-6 gap-2 overflow-x-auto">
                 {buildType !== "document" && isSiteSnapshot(snapshot) && (
                   <>
@@ -1679,7 +2130,6 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                 </button>
               </div>
 
-              {/* Renderer switch */}
               {buildType === "document" ? (
                 <DocumentPreview
                   snapshot={isDocSnapshot(snapshot) ? snapshot : null}

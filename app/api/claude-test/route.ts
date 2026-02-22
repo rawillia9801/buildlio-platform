@@ -1,12 +1,16 @@
 // FILE: app/api/claude-test/route.ts
-// BUILDLIO.SITE — v5.5 Backend (Build Types + Document Mode + Dual Validators)
+// BUILDLIO.SITE — v5.5 Backend (Vision Splash Flow Wiring + Build Types + Document Mode + Dual Validators)
 //
 // CHANGELOG
 // - v5.5
-//   * HARD-GATE: document builds MUST NOT include snapshot.pages (fail + polish pass)
-//   * HARD-GATE: non-document builds MUST NOT include snapshot.documents (fail + polish pass)
-//   * IMPROVE: buildType canonicalization accepts more aliases (landing-page, landingpage, docs, shop, app)
-//   * IMPROVE: TYPE: parser accepts hyphens/underscores/spaces consistently
+//   * ENHANCE: Accepts optional splashChoice + buildConsoleMode hints from the Vision Splash Flow
+//              (white beats / ripple / “sync vs sploosh” / intro), and threads them into the creative brief.
+//   * ENHANCE: Adds optional “second-step chooser” inputs for Documents (documentCategory, jurisdiction),
+//              so the backend can produce the correct doc type immediately (no extra chat step).
+//   * KEEP: HARD-GATE: document builds MUST NOT include snapshot.pages (fail + polish pass)
+//   * KEEP: HARD-GATE: non-document builds MUST NOT include snapshot.documents (fail + polish pass)
+//   * KEEP: buildType canonicalization accepts aliases (landing-page, landingpage, docs, shop, app)
+//   * KEEP: parser accepts hyphens/underscores/spaces consistently
 //   * KEEP: Document mode outputs snapshot.documents[] (NOT pages[])
 //   * KEEP: Document-specific validator + quality gate (no website blocks required for documents)
 //   * KEEP: Website/store/landing/app/other remain website-style snapshot.pages[] with required blocks on index
@@ -35,11 +39,24 @@ const anthropic = new Anthropic({
 
 type BuildType = "website" | "landing_page" | "application" | "document" | "store" | "other";
 
+// Vision Splash Flow hints (optional; UI-driven)
+type SplashChoice = "sync" | "sploosh" | "ripple" | "none";
+type BuildConsoleMode = "white_console" | "standard" | "none";
+
 type SiteSnapshot = {
   appName: string;
   tagline?: string;
   navigation?: { items: string[] };
-  meta?: { buildType?: BuildType; intent?: string };
+  meta?: {
+    buildType?: BuildType;
+    intent?: string;
+
+    // optional metadata (UI can send; backend preserves)
+    splashChoice?: SplashChoice;
+    buildConsoleMode?: BuildConsoleMode;
+    documentCategory?: DocumentItem["category"];
+    jurisdiction?: string;
+  };
   pages: Array<{ slug: string; title?: string; blocks: any[] }>;
 };
 
@@ -65,7 +82,16 @@ type DocumentItem = {
 
 type DocSnapshot = {
   appName: string;
-  meta?: { buildType?: BuildType; intent?: string };
+  meta?: {
+    buildType?: BuildType;
+    intent?: string;
+
+    // optional metadata (UI can send; backend preserves)
+    splashChoice?: SplashChoice;
+    buildConsoleMode?: BuildConsoleMode;
+    documentCategory?: DocumentItem["category"];
+    jurisdiction?: string;
+  };
   documents: DocumentItem[];
 };
 
@@ -165,6 +191,53 @@ function canonicalizeBuildType(raw: any): BuildType | null {
   if (t === "other") return "other";
 
   return null;
+}
+
+function canonicalizeSplashChoice(raw: any): SplashChoice | null {
+  const t = normalizeWhitespace(raw).toLowerCase();
+  if (!t) return null;
+  const x = t.replace(/[-\s]+/g, "_").trim();
+  if (x === "sync") return "sync";
+  if (x === "sploosh" || x === "splosh" || x === "splash") return "sploosh";
+  if (x === "ripple" || x === "ripples") return "ripple";
+  if (x === "none" || x === "off") return "none";
+  return null;
+}
+
+function canonicalizeBuildConsoleMode(raw: any): BuildConsoleMode | null {
+  const t = normalizeWhitespace(raw).toLowerCase();
+  if (!t) return null;
+  const x = t.replace(/[-\s]+/g, "_").trim();
+  if (x === "white_console" || x === "white" || x === "console_white") return "white_console";
+  if (x === "standard" || x === "default") return "standard";
+  if (x === "none" || x === "off") return "none";
+  return null;
+}
+
+function canonicalizeDocumentCategory(raw: any): DocumentItem["category"] | null {
+  const t = normalizeWhitespace(raw).toLowerCase();
+  if (!t) return null;
+  const x = t.replace(/[-\s]+/g, "_").trim();
+
+  const allowed: Record<string, DocumentItem["category"]> = {
+    letter: "letter",
+    cease_and_desist: "cease_and_desist",
+    cease: "cease_and_desist",
+    cnd: "cease_and_desist",
+    bill_of_sale: "bill_of_sale",
+    bill: "bill_of_sale",
+    sale: "bill_of_sale",
+    health_guarantee: "health_guarantee",
+    guarantee: "health_guarantee",
+    contract: "contract",
+    agreement: "contract",
+    policy: "policy",
+    packet: "packet",
+    proposal: "proposal",
+    other: "other",
+  };
+
+  return allowed[x] || null;
 }
 
 function detectBuildTypeFromText(messages: any[]): BuildType | null {
@@ -345,7 +418,16 @@ function validateBuildResponse(parsed: any, buildType: BuildType): { ok: boolean
 /* -----------------------------
 ANCHOR:PROMPTS
 -------------------------------- */
-function buildCreativeBrief(messages: any[], buildType: BuildType) {
+function buildCreativeBrief(
+  messages: any[],
+  buildType: BuildType,
+  opts: {
+    splashChoice?: SplashChoice | null;
+    buildConsoleMode?: BuildConsoleMode | null;
+    documentCategory?: DocumentItem["category"] | null;
+    jurisdiction?: string | null;
+  }
+) {
   const lastUser = [...(messages || [])].reverse().find((m) => m?.role === "user");
   const userText = safeString(lastUser?.content).slice(0, 2500);
 
@@ -359,10 +441,22 @@ function buildCreativeBrief(messages: any[], buildType: BuildType) {
     other: "Other: infer responsibly, still produce a premium, specific build.",
   };
 
+  const splashLine =
+    opts.splashChoice || opts.buildConsoleMode
+      ? `- Vision Splash Flow hints: splashChoice=${opts.splashChoice || "n/a"}, buildConsoleMode=${opts.buildConsoleMode || "n/a"}`
+      : "";
+
+  const docChooserLine =
+    buildType === "document" && (opts.documentCategory || opts.jurisdiction)
+      ? `- Document chooser: category=${opts.documentCategory || "n/a"}, jurisdiction=${opts.jurisdiction || "n/a"}`
+      : "";
+
   return `
 CREATIVE BRIEF
 - Build type: ${buildType}
 - Type guidance: ${typeGuidance[buildType]}
+${splashLine}
+${docChooserLine}
 - User request (may include 'TYPE:' tag): ${userText || "Not specified — infer responsibly and ask 1–2 questions only if absolutely necessary."}
 - Voice: premium, calm confidence, human, direct — not rushed.
 - Constraints:
@@ -372,8 +466,13 @@ CREATIVE BRIEF
 `.trim();
 }
 
-function buildSystemPrompt(brief: string, buildType: BuildType) {
+function buildSystemPrompt(brief: string, buildType: BuildType, opts: { documentCategory?: DocumentItem["category"] | null; jurisdiction?: string | null }) {
   if (buildType === "document") {
+    const docNudge =
+      opts.documentCategory || opts.jurisdiction
+        ? `\nDOCUMENT TARGETING:\n- The user selected category="${opts.documentCategory || "n/a"}" and jurisdiction="${opts.jurisdiction || "n/a"}".\n- Draft the correct document immediately. Avoid asking questions unless truly necessary.\n`
+        : "";
+
     return `
 You are Buildlio — a professional document drafter (letters, contracts, policies, templates).
 Your output reads like a real firm drafted it: structured, clear, consistent, and ready to export.
@@ -424,7 +523,7 @@ DOCUMENT RULES (NON-NEGOTIABLE):
 DECISION RULE:
 - If the user has ANY context, build immediately.
 - Only ask questions if user gave no usable context at all.
-
+${docNudge}
 ${brief}
 `.trim();
   }
@@ -523,6 +622,14 @@ export async function POST(req: Request) {
     const projectId = String(body.projectId || "");
     const messages = body.messages || [];
 
+    // Vision Splash Flow / UI hints (optional)
+    const splashChoice = canonicalizeSplashChoice(body.splashChoice) || null;
+    const buildConsoleMode = canonicalizeBuildConsoleMode(body.buildConsoleMode) || null;
+
+    // Document “second-step chooser” (optional)
+    const documentCategory = canonicalizeDocumentCategory(body.documentCategory) || null;
+    const jurisdiction = isNonEmptyString(body.jurisdiction) ? String(body.jurisdiction).trim() : null;
+
     // Prefer explicit buildType from UI. Fallback to detection.
     const explicitType = canonicalizeBuildType(body.buildType);
     const detected = detectBuildTypeFromText(messages);
@@ -541,8 +648,14 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    const brief = buildCreativeBrief(messages, buildType);
-    const systemPrompt = buildSystemPrompt(brief, buildType);
+    const brief = buildCreativeBrief(messages, buildType, {
+      splashChoice,
+      buildConsoleMode,
+      documentCategory,
+      jurisdiction,
+    });
+
+    const systemPrompt = buildSystemPrompt(brief, buildType, { documentCategory, jurisdiction });
 
     async function runClaude(callMessages: any[]) {
       const aiResponse = await anthropic.messages.create({
@@ -571,7 +684,19 @@ export async function POST(req: Request) {
       if ((parsed as any)?.type === "build" && (parsed as any)?.snapshot) {
         (parsed as any).snapshot.meta = (parsed as any).snapshot.meta || {};
         (parsed as any).snapshot.meta.buildType = (parsed as any).snapshot.meta.buildType || buildType;
-        (parsed as any).snapshot.meta.intent = (parsed as any).snapshot.meta.intent || `Buildlio ${buildType} generation`;
+
+        // Preserve Vision Splash Flow + chooser hints in meta (non-breaking)
+        if (splashChoice) (parsed as any).snapshot.meta.splashChoice = (parsed as any).snapshot.meta.splashChoice || splashChoice;
+        if (buildConsoleMode) (parsed as any).snapshot.meta.buildConsoleMode = (parsed as any).snapshot.meta.buildConsoleMode || buildConsoleMode;
+
+        if (buildType === "document") {
+          if (documentCategory) (parsed as any).snapshot.meta.documentCategory = (parsed as any).snapshot.meta.documentCategory || documentCategory;
+          if (jurisdiction) (parsed as any).snapshot.meta.jurisdiction = (parsed as any).snapshot.meta.jurisdiction || jurisdiction;
+        }
+
+        (parsed as any).snapshot.meta.intent =
+          (parsed as any).snapshot.meta.intent ||
+          `Buildlio ${buildType} generation${splashChoice ? ` (${splashChoice})` : ""}${buildConsoleMode ? ` [${buildConsoleMode}]` : ""}`;
       }
 
       return parsed;
@@ -603,11 +728,17 @@ export async function POST(req: Request) {
 
     // Save & charge only on build
     if (parsedResponse.type === "build" && (parsedResponse as any).snapshot) {
+      const noteParts = [`Professional Build v5.5 (${buildType})`];
+      if (splashChoice) noteParts.push(`splash:${splashChoice}`);
+      if (buildConsoleMode) noteParts.push(`console:${buildConsoleMode}`);
+      if (buildType === "document" && documentCategory) noteParts.push(`doc:${documentCategory}`);
+      if (buildType === "document" && jurisdiction) noteParts.push(`jur:${jurisdiction}`);
+
       const { error: rpcError } = await supabase.rpc("save_version_and_charge_credit", {
         p_project_id: projectId,
         p_owner_id: authData.user.id,
         p_snapshot: (parsedResponse as any).snapshot,
-        p_note: `Professional Build v5.5 (${buildType})`,
+        p_note: noteParts.join(" • "),
         p_model: "claude-sonnet-4-6",
       });
 
