@@ -1,12 +1,15 @@
 // FILE: app/api/claude-test/route.ts
-// BUILDLIO.SITE — v5.4 Backend (Build Types + Document Mode + Dual Validators)
+// BUILDLIO.SITE — v5.5 Backend (Build Types + Document Mode + Dual Validators)
 //
 // CHANGELOG
-// - v5.4
-//   * NEW: Document mode outputs snapshot.documents[] (NOT pages[])
-//   * NEW: Document-specific validator + quality gate (no website blocks required for documents)
+// - v5.5
+//   * HARD-GATE: document builds MUST NOT include snapshot.pages (fail + polish pass)
+//   * HARD-GATE: non-document builds MUST NOT include snapshot.documents (fail + polish pass)
+//   * IMPROVE: buildType canonicalization accepts more aliases (landing-page, landingpage, docs, shop, app)
+//   * IMPROVE: TYPE: parser accepts hyphens/underscores/spaces consistently
+//   * KEEP: Document mode outputs snapshot.documents[] (NOT pages[])
+//   * KEEP: Document-specific validator + quality gate (no website blocks required for documents)
 //   * KEEP: Website/store/landing/app/other remain website-style snapshot.pages[] with required blocks on index
-//   * FIX: buildType parsing cleanup + single canonical mapping
 //   * KEEP: JSON-only output, extraction, retry “polish pass”, RPC save_version_and_charge_credit on success
 //
 // ANCHOR:ENV
@@ -135,18 +138,32 @@ function hasSpecificitySignals(text: string) {
 ANCHOR:BUILD_TYPE_DETECT
 -------------------------------- */
 function canonicalizeBuildType(raw: any): BuildType | null {
-  const t = normalizeWhitespace(raw).toLowerCase();
-  if (!t) return null;
-  if (t === "landing page") return "landing_page";
+  const t0 = normalizeWhitespace(raw).toLowerCase();
+  if (!t0) return null;
+
+  // normalize common separators
+  const t = t0.replace(/[-\s]+/g, "_").replace(/__+/g, "_").trim();
+
+  if (t === "landing") return "landing_page";
+  if (t === "landingpage") return "landing_page";
   if (t === "landing_page") return "landing_page";
+
   if (t === "website") return "website";
+
   if (t === "application") return "application";
   if (t === "app") return "application";
+  if (t === "portal") return "application";
+
   if (t === "document") return "document";
+  if (t === "documents") return "document";
   if (t === "docs") return "document";
+
   if (t === "store") return "store";
   if (t === "shop") return "store";
+  if (t === "ecommerce") return "store";
+
   if (t === "other") return "other";
+
   return null;
 }
 
@@ -154,15 +171,20 @@ function detectBuildTypeFromText(messages: any[]): BuildType | null {
   const lastUser = [...(messages || [])].reverse().find((m) => m?.role === "user");
   const t = normalizeWhitespace(lastUser?.content).toLowerCase();
 
-  // supports: "TYPE: store"
-  const m = t.match(/(^|\n)\s*type\s*:\s*(website|landing_page|landing page|application|app|document|docs|store|shop|other)\s*(\n|$)/i);
+  // supports:
+  // "TYPE: store"
+  // "TYPE: landing page"
+  // "TYPE: landing-page"
+  const m = t.match(
+    /(^|\n)\s*type\s*:\s*(website|landing[_\-\s]*page|landingpage|landing|application|app|portal|document|documents|docs|store|shop|ecommerce|other)\s*(\n|$)/i
+  );
   if (m?.[2]) return canonicalizeBuildType(m[2]);
 
-  if (/(store|shop|checkout|cart|products|sku|inventory|shipping)/i.test(t)) return "store";
-  if (/(application|dashboard|login|roles|admin|workflow|crud|portal)/i.test(t)) return "application";
+  if (/(store|shop|checkout|cart|products|sku|inventory|shipping|returns)/i.test(t)) return "store";
+  if (/(application|dashboard|login|roles|admin|workflow|crud|portal|audit trail)/i.test(t)) return "application";
   if (/(document|documents|letter|letters|proposal|contract|policy|terms|agreement|handbook|guide|cease and desist|bill of sale|health guarantee)/i.test(t))
     return "document";
-  if (/(landing page|single page|one page|lead capture|waitlist|signup)/i.test(t)) return "landing_page";
+  if (/(landing page|single page|one page|lead capture|waitlist|signup|book a call)/i.test(t)) return "landing_page";
   if (t.length > 0) return "website";
 
   return null;
@@ -172,8 +194,16 @@ function detectBuildTypeFromText(messages: any[]): BuildType | null {
 ANCHOR:VALIDATORS
 -------------------------------- */
 function validateWebsiteBuild(parsed: any): { ok: boolean; reason?: string } {
+  if (parsed?.type !== "build") return { ok: false, reason: "Not a build response" };
+
   const snap = parsed?.snapshot;
   if (!snap) return { ok: false, reason: "Missing snapshot" };
+
+  // HARD-GATE: website builds must not include documents
+  if (Array.isArray(snap?.documents) && snap.documents.length > 0) {
+    return { ok: false, reason: "Website build must not include snapshot.documents" };
+  }
+
   if (!isNonEmptyString(snap.appName)) return { ok: false, reason: "Missing appName" };
   if (!Array.isArray(snap.pages) || snap.pages.length < 1) return { ok: false, reason: "Missing pages" };
 
@@ -203,12 +233,12 @@ function validateWebsiteBuild(parsed: any): { ok: boolean; reason?: string } {
   const featureItems = arr(features?.items);
   if (featureItems.length !== 6) return { ok: false, reason: "Features must be exactly 6" };
   for (const it of featureItems) {
-    const t = normalizeWhitespace(it?.title);
+    const tt = normalizeWhitespace(it?.title);
     const d = normalizeWhitespace(it?.description);
-    if (t.length < 8) return { ok: false, reason: "Feature title too short" };
+    if (tt.length < 8) return { ok: false, reason: "Feature title too short" };
     if (d.length < 60) return { ok: false, reason: "Feature description too thin" };
     if (!/so you can/i.test(d)) return { ok: false, reason: "Feature description missing 'so you can' outcome" };
-    if (containsAny(`${t} ${d}`, GENERIC_BAD)) return { ok: false, reason: "Features too buzzwordy" };
+    if (containsAny(`${tt} ${d}`, GENERIC_BAD)) return { ok: false, reason: "Features too buzzwordy" };
   }
 
   const stats = getBlock(blocks, "stats");
@@ -258,9 +288,18 @@ function validateWebsiteBuild(parsed: any): { ok: boolean; reason?: string } {
 }
 
 function validateDocumentBuild(parsed: any): { ok: boolean; reason?: string } {
+  if (parsed?.type !== "build") return { ok: false, reason: "Not a build response" };
+
   const snap = parsed?.snapshot;
   if (!snap) return { ok: false, reason: "Missing snapshot" };
+
+  // HARD-GATE: document builds must not include pages
+  if (Array.isArray(snap?.pages) && snap.pages.length > 0) {
+    return { ok: false, reason: "Document build must not include snapshot.pages" };
+  }
+
   if (!isNonEmptyString(snap.appName)) return { ok: false, reason: "Missing appName" };
+
   const docs = arr(snap.documents);
   if (docs.length < 1) return { ok: false, reason: "Missing documents[]" };
 
@@ -269,6 +308,7 @@ function validateDocumentBuild(parsed: any): { ok: boolean; reason?: string } {
     if (!isNonEmptyString(d?.title)) return { ok: false, reason: "Document missing title" };
     if (!isNonEmptyString(d?.category)) return { ok: false, reason: "Document missing category" };
     if (d?.format !== "html") return { ok: false, reason: "Document format must be 'html'" };
+
     const body = safeString(d?.body_html);
     if (body.length < 600) return { ok: false, reason: "Document body too short" };
     if (!/<p[\s>]/i.test(body)) return { ok: false, reason: "Document must include <p>" };
@@ -277,6 +317,11 @@ function validateDocumentBuild(parsed: any): { ok: boolean; reason?: string } {
     const hasHeading = /<h1[\s>]|<h2[\s>]/i.test(body);
     const hasSections = /<h2[\s>]|<h3[\s>]/i.test(body);
     if (!hasHeading || !hasSections) return { ok: false, reason: "Document needs headings/sections" };
+
+    // Ensure it includes some kind of disclaimer signal (kept flexible)
+    if (!/(not legal advice|attorney|counsel|jurisdiction)/i.test(body)) {
+      return { ok: false, reason: "Document missing a legal/disclaimer signal" };
+    }
   }
 
   return { ok: true };
@@ -324,7 +369,7 @@ CREATIVE BRIEF
   * No fake awards, no fake famous clients, no guaranteed results.
   * If buildType=document: include “not legal advice” style disclaimer and encourage review by counsel where appropriate.
   * Make deliverables explicit (export/ownership, what the user receives).
-`;
+`.trim();
 }
 
 function buildSystemPrompt(brief: string, buildType: BuildType) {
@@ -384,7 +429,6 @@ ${brief}
 `.trim();
   }
 
-  // Website-style system prompt (your existing strong rules)
   return `
 You are Buildlio — a world-class AI website architect AND elite conversion copywriter.
 Your output reads like a real agency deliverable: specific, persuasive, premium, modern, and grounded.
@@ -464,6 +508,8 @@ Build type: ${buildType}
 
 Rebuild from scratch with significantly stronger, more specific premium copy.
 Follow the exact output structure required for this build type.
+For document builds: output snapshot.documents ONLY (no pages).
+For non-document builds: output snapshot.pages ONLY (no documents).
 
 User context:
 ${ctx}
@@ -521,7 +567,7 @@ export async function POST(req: Request) {
         throw new Error("AI returned malformed JSON. Please try again.");
       }
 
-      // Ensure meta.buildType exists
+      // Ensure meta.buildType exists (and aligns to the route's chosen buildType)
       if ((parsed as any)?.type === "build" && (parsed as any)?.snapshot) {
         (parsed as any).snapshot.meta = (parsed as any).snapshot.meta || {};
         (parsed as any).snapshot.meta.buildType = (parsed as any).snapshot.meta.buildType || buildType;
@@ -561,7 +607,7 @@ export async function POST(req: Request) {
         p_project_id: projectId,
         p_owner_id: authData.user.id,
         p_snapshot: (parsedResponse as any).snapshot,
-        p_note: `Professional Build v5.4 (${buildType})`,
+        p_note: `Professional Build v5.5 (${buildType})`,
         p_model: "claude-sonnet-4-6",
       });
 
