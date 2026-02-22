@@ -1,8 +1,10 @@
 /* FILE: app/page.tsx
-   BUILDLIO.SITE — v4.5: White Splash Intro + Typing Focus Fix
-   - ADD: White first-load splash with type-on greeting + smooth fade
-   - KEEP: High-tech UI, builder flow, export, logs, history
-   - KEEP: Chat input focus stability (no 1-letter bug)
+   BUILDLIO.SITE — v4.6: “SPLOOSH” White Splash + Choice Select + Focus Fix
+   - ADD: Solid white splash with water-ripple vibe + interactive choices
+   - ADD: Click choice -> button sinks + expanding “sploosh” ripple -> app loads
+   - ADD: Auto-seed first chat prompt based on choice
+   - FIX: Chat input “1 letter at a time” (focus stability)
+   - KEEP: Existing builder UI, export, logs, version history, preview
 */
 
 "use client";
@@ -19,111 +21,313 @@ type LogEntry = { timestamp: string; message: string; type: "info" | "success" |
 type Tab = "chat" | "console" | "history";
 type UserLite = { email?: string; id?: string } | null;
 
+type BuildChoice =
+  | "Website"
+  | "Application"
+  | "Documents"
+  | "Store"
+  | "Landing Page"
+  | "Other";
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
 /* -----------------------------
-   White Splash Intro Component
+   White SPLOOSH Splash
 -------------------------------- */
-function SplashIntro({
-  onDone,
+function SplashSploosh({
+  onSelect,
 }: {
-  onDone: () => void;
+  onSelect: (choice: BuildChoice) => void;
 }) {
-  const L1 = "Hello! I’m Buildlio —";
-  const L2 = "Let’s turn your dream into a reality.";
-  const L3 = "What are we building today?";
+  const choices: Array<{ label: BuildChoice; desc: string }> = [
+    { label: "Website", desc: "A full marketing site with pages & sections" },
+    { label: "Application", desc: "A web app UI + flows + dashboard layout" },
+    { label: "Documents", desc: "Policies, contracts, proposals, packets" },
+    { label: "Store", desc: "Product landing + checkout-ready structure" },
+    { label: "Landing Page", desc: "One high-converting page for ads/SEO" },
+    { label: "Other", desc: "Tell Buildlio what you have in mind" },
+  ];
 
-  const [line1, setLine1] = useState("");
-  const [line2, setLine2] = useState("");
-  const [line3, setLine3] = useState("");
-  const [phase, setPhase] = useState<1 | 2 | 3 | 4>(1);
-  const [fadeOut, setFadeOut] = useState(false);
+  const [sploosh, setSploosh] = useState<{
+    x: number;
+    y: number;
+    active: boolean;
+  }>({ x: 50, y: 50, active: false });
 
-  useEffect(() => {
-    let t: any;
+  const [selected, setSelected] = useState<BuildChoice | null>(null);
+  const [isExiting, setIsExiting] = useState(false);
+  const [sinkKey, setSinkKey] = useState<string | null>(null);
 
-    const type = (full: string, setter: (v: string) => void, speed = 18) => {
-      let i = 0;
-      return new Promise<void>((resolve) => {
-        const tick = () => {
-          i++;
-          setter(full.slice(0, i));
-          if (i >= full.length) return resolve();
-          t = setTimeout(tick, speed);
-        };
-        t = setTimeout(tick, 220);
-      });
-    };
+  const rootRef = useRef<HTMLDivElement>(null);
 
-    const run = async () => {
-      await type(L1, setLine1, 18);
-      setPhase(2);
-      await type(L2, setLine2, 16);
-      setPhase(3);
-      await type(L3, setLine3, 16);
-      setPhase(4);
+  const startSploosh = async (choice: BuildChoice, ev: React.MouseEvent<HTMLButtonElement>) => {
+    if (isExiting) return;
 
-      // small pause so it feels intentional
-      await new Promise((r) => setTimeout(r, 550));
+    setSelected(choice);
 
-      setFadeOut(true);
-      await new Promise((r) => setTimeout(r, 520));
-      onDone();
-    };
+    // Find click point relative to splash container
+    const rect = rootRef.current?.getBoundingClientRect();
+    const cx = rect ? ((ev.clientX - rect.left) / rect.width) * 100 : 50;
+    const cy = rect ? ((ev.clientY - rect.top) / rect.height) * 100 : 45;
 
-    run();
+    setSinkKey(choice); // sink animation for clicked button
+    setSploosh({ x: clamp(cx, 5, 95), y: clamp(cy, 5, 95), active: true });
 
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // let animation play
+    setIsExiting(true);
+    await new Promise((r) => setTimeout(r, 620));
+    onSelect(choice);
+  };
 
   return (
     <div
-      className={`fixed inset-0 z-[9999] bg-white text-zinc-900 transition-opacity duration-500 ${
-        fadeOut ? "opacity-0" : "opacity-100"
-      }`}
+      ref={rootRef}
+      className={`fixed inset-0 z-[9999] bg-white text-zinc-900 overflow-hidden`}
+      style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
     >
-      <div className="h-full w-full flex items-center justify-center px-6">
-        <div className="max-w-3xl w-full">
-          <div className="flex items-center gap-4 mb-10">
-            <div className="w-12 h-12 rounded-3xl bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center text-white font-black text-xl">
-              ⬡
-            </div>
-            <div>
-              <div className="text-sm font-semibold tracking-[0.2em] uppercase text-zinc-500">
-                buildlio.site
+      {/* Ambient “water surface” rings */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="sploosh-ambient sploosh-ambient-a" />
+        <div className="sploosh-ambient sploosh-ambient-b" />
+        <div className="sploosh-ambient sploosh-ambient-c" />
+      </div>
+
+      {/* Click SPLOOSH ripple */}
+      {sploosh.active && (
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={
+            {
+              ["--sx" as any]: `${sploosh.x}%`,
+              ["--sy" as any]: `${sploosh.y}%`,
+            } as React.CSSProperties
+          }
+        >
+          <div className="sploosh-ring sploosh-ring-1" />
+          <div className="sploosh-ring sploosh-ring-2" />
+          <div className="sploosh-ring sploosh-ring-3" />
+          <div className="sploosh-wash" />
+        </div>
+      )}
+
+      {/* Content */}
+      <div className="relative h-full w-full flex items-center justify-center px-6">
+        <div className="w-full max-w-5xl">
+          <div className="flex items-center justify-between gap-6 mb-10">
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-3xl bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center text-white font-black text-xl shadow-sm">
+                ⬡
               </div>
-              <div className="text-xs text-zinc-400">AI Website Architect</div>
+              <div>
+                <div className="text-sm font-semibold tracking-[0.2em] uppercase text-zinc-500">
+                  buildlio.site
+                </div>
+                <div className="text-xs text-zinc-400">AI Chat Website Builder</div>
+              </div>
+            </div>
+
+            <div className="hidden md:flex items-center gap-2 text-xs text-zinc-400">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
+              Ready
             </div>
           </div>
 
-          <div className="space-y-5">
-            <div className="text-4xl md:text-5xl font-black tracking-[-0.03em] leading-[1.05]">
-              {line1}
-              {phase === 1 && <span className="inline-block w-2 h-8 align-middle ml-1 bg-zinc-900 animate-pulse" />}
+          <div className="grid md:grid-cols-2 gap-10 items-start">
+            {/* Left: message */}
+            <div>
+              <h1 className="text-4xl md:text-5xl font-black tracking-[-0.04em] leading-[1.05]">
+                Hi! I’m Buildlio — your AI Chat Website Builder.
+              </h1>
+              <p className="mt-5 text-xl md:text-2xl text-zinc-700 leading-relaxed">
+                Let’s turn your dream into a reality.
+                <span className="block mt-2 text-zinc-600">
+                  What are we creating today?
+                </span>
+              </p>
+
+              <div className="mt-8 flex items-center gap-3 text-sm text-zinc-500">
+                <div className="w-2.5 h-2.5 rounded-full bg-cyan-500" />
+                <span>Choose one — then watch it go SPLOOSH.</span>
+              </div>
+
+              <div className="mt-10 p-5 rounded-3xl border border-zinc-200 bg-zinc-50">
+                <div className="text-xs font-semibold tracking-[0.2em] uppercase text-zinc-500">
+                  Tip
+                </div>
+                <div className="mt-2 text-sm text-zinc-600">
+                  After you choose, just describe your business in one sentence. Buildlio will generate a complete, polished build.
+                </div>
+              </div>
             </div>
 
-            <div className="text-2xl md:text-3xl font-semibold text-zinc-700 tracking-[-0.02em]">
-              {line2}
-              {phase === 2 && <span className="inline-block w-2 h-7 align-middle ml-1 bg-zinc-900 animate-pulse" />}
-            </div>
+            {/* Right: choices */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {choices.map((c) => {
+                const sinking = sinkKey === c.label && isExiting;
+                const disabled = isExiting;
 
-            <div className="text-xl md:text-2xl text-zinc-600">
-              {line3}
-              {phase === 3 && <span className="inline-block w-2 h-6 align-middle ml-1 bg-zinc-900 animate-pulse" />}
+                return (
+                  <button
+                    key={c.label}
+                    onClick={(ev) => startSploosh(c.label, ev)}
+                    disabled={disabled}
+                    className={[
+                      "relative text-left p-6 rounded-3xl border border-zinc-200 bg-white",
+                      "transition-all duration-300",
+                      "hover:shadow-lg hover:-translate-y-0.5",
+                      "active:translate-y-0",
+                      disabled ? "opacity-80 cursor-not-allowed" : "",
+                      sinking ? "sploosh-sink" : "",
+                    ].join(" ")}
+                  >
+                    {/* “waterline” gloss */}
+                    <div className="pointer-events-none absolute inset-0 rounded-3xl overflow-hidden">
+                      <div className="absolute inset-x-0 -top-10 h-24 bg-gradient-to-b from-white via-white/60 to-transparent" />
+                      <div className="absolute -inset-24 opacity-[0.06] bg-[radial-gradient(#000_1px,transparent_1px)] [background-size:22px_22px]" />
+                    </div>
+
+                    <div className="relative">
+                      <div className="flex items-center justify-between gap-4">
+                        <div className="text-lg font-extrabold tracking-[-0.02em]">{c.label}</div>
+                        <div className="w-9 h-9 rounded-2xl bg-zinc-100 flex items-center justify-center text-zinc-700 font-black">
+                          →
+                        </div>
+                      </div>
+                      <div className="mt-2 text-sm text-zinc-600 leading-relaxed">
+                        {c.desc}
+                      </div>
+
+                      {/* “sink” ripple lines on the card */}
+                      <div className="pointer-events-none absolute left-6 right-6 bottom-5 h-10 opacity-0 sploosh-card-lines" />
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          <div className="mt-12 flex items-center gap-3 text-sm text-zinc-500">
-            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
-            <span>Preparing your builder…</span>
+          <div className="mt-12 text-xs text-zinc-400">
+            By continuing, you agree to Buildlio’s Terms & Privacy.
           </div>
         </div>
       </div>
+
+      {/* CSS (scoped via global style tag) */}
+      <style jsx>{`
+        .sploosh-ambient {
+          position: absolute;
+          inset: -40%;
+          border-radius: 999px;
+          border: 2px solid rgba(0, 0, 0, 0.05);
+          transform: scale(0.7);
+          opacity: 0.4;
+          filter: blur(0.2px);
+          animation: ambient 6.8s ease-in-out infinite;
+        }
+        .sploosh-ambient-a {
+          top: 10%;
+          left: -5%;
+          animation-delay: 0s;
+        }
+        .sploosh-ambient-b {
+          top: -10%;
+          left: 15%;
+          animation-duration: 8.2s;
+          opacity: 0.32;
+          animation-delay: 0.6s;
+        }
+        .sploosh-ambient-c {
+          top: 18%;
+          left: 28%;
+          animation-duration: 9.6s;
+          opacity: 0.26;
+          animation-delay: 1.2s;
+        }
+        @keyframes ambient {
+          0% { transform: scale(0.68); opacity: 0.12; }
+          50% { transform: scale(0.78); opacity: 0.22; }
+          100% { transform: scale(0.68); opacity: 0.12; }
+        }
+
+        .sploosh-ring {
+          position: absolute;
+          left: var(--sx);
+          top: var(--sy);
+          width: 14px;
+          height: 14px;
+          transform: translate(-50%, -50%) scale(0.2);
+          border-radius: 999px;
+          border: 2px solid rgba(0, 0, 0, 0.11);
+          opacity: 0.0;
+          animation: ring 620ms ease-out forwards;
+          filter: blur(0.1px);
+        }
+        .sploosh-ring-2 { animation-delay: 90ms; border-color: rgba(0,0,0,0.085); }
+        .sploosh-ring-3 { animation-delay: 160ms; border-color: rgba(0,0,0,0.06); }
+
+        @keyframes ring {
+          0% { transform: translate(-50%, -50%) scale(0.2); opacity: 0.0; }
+          12% { opacity: 0.55; }
+          100% { transform: translate(-50%, -50%) scale(80); opacity: 0.0; }
+        }
+
+        .sploosh-wash {
+          position: absolute;
+          inset: 0;
+          background: radial-gradient(circle at var(--sx) var(--sy),
+            rgba(0,0,0,0.06),
+            rgba(0,0,0,0.02) 18%,
+            rgba(255,255,255,0) 48%);
+          animation: wash 620ms ease-out forwards;
+          opacity: 0;
+        }
+        @keyframes wash {
+          0% { opacity: 0; }
+          20% { opacity: 1; }
+          100% { opacity: 0; }
+        }
+
+        .sploosh-sink {
+          transform: translateY(8px) scale(0.985) !important;
+          filter: saturate(0.98);
+        }
+        .sploosh-sink::after {
+          content: "";
+          position: absolute;
+          inset: -2px;
+          border-radius: 28px;
+          border: 2px solid rgba(0,0,0,0.08);
+          opacity: 0;
+          animation: sinkOutline 540ms ease-out forwards;
+          pointer-events: none;
+        }
+        @keyframes sinkOutline {
+          0% { opacity: 0.0; transform: scale(1); }
+          15% { opacity: 0.55; }
+          100% { opacity: 0.0; transform: scale(1.08); }
+        }
+
+        .sploosh-sink .sploosh-card-lines {
+          opacity: 1;
+          background:
+            radial-gradient(circle at 50% 55%, rgba(0,0,0,0.11), rgba(255,255,255,0) 58%),
+            radial-gradient(circle at 50% 55%, rgba(0,0,0,0.08), rgba(255,255,255,0) 62%);
+          animation: cardRipple 520ms ease-out forwards;
+        }
+        @keyframes cardRipple {
+          0% { transform: translateY(0) scale(0.85); opacity: 0.2; }
+          35% { opacity: 0.35; }
+          100% { transform: translateY(6px) scale(1.2); opacity: 0; }
+        }
+      `}</style>
     </div>
   );
 }
 
 /* -----------------------------
-   Top Navigation (stable)
+   Top Navigation
 -------------------------------- */
 function TopNav({
   view,
@@ -151,16 +355,10 @@ function TopNav({
       </div>
 
       <div className="flex items-center gap-7 text-sm font-medium">
-        <button
-          onClick={() => setView("builder")}
-          className={`transition-colors ${view === "builder" ? "text-white" : "text-zinc-400 hover:text-white"}`}
-        >
+        <button onClick={() => setView("builder")} className={`transition-colors ${view === "builder" ? "text-white" : "text-zinc-400 hover:text-white"}`}>
           Builder
         </button>
-        <button
-          onClick={() => setView("pricing")}
-          className={`transition-colors ${view === "pricing" ? "text-white" : "text-zinc-400 hover:text-white"}`}
-        >
+        <button onClick={() => setView("pricing")} className={`transition-colors ${view === "pricing" ? "text-white" : "text-zinc-400 hover:text-white"}`}>
           Pricing
         </button>
       </div>
@@ -191,7 +389,10 @@ function TopNav({
 -------------------------------- */
 export default function BuildlioApp() {
   const [view, setView] = useState<ViewState>("landing");
-  const [splashDone, setSplashDone] = useState(false);
+
+  // splash control
+  const [showSplash, setShowSplash] = useState(true);
+  const [firstChoice, setFirstChoice] = useState<BuildChoice | null>(null);
 
   const supabase = useMemo(
     () => createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
@@ -209,7 +410,6 @@ export default function BuildlioApp() {
   const [activePageSlug, setActivePageSlug] = useState("index");
   const [creditBalance, setCreditBalance] = useState(10);
 
-  // Chat
   const [chatInput, setChatInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -222,7 +422,6 @@ export default function BuildlioApp() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
 
-  // Build Console & Tabs
   const [activeTab, setActiveTab] = useState<Tab>("chat");
   const [buildLogs, setBuildLogs] = useState<LogEntry[]>([]);
 
@@ -237,34 +436,46 @@ export default function BuildlioApp() {
     ]);
   };
 
-  // ✅ Focus lock to prevent the “1 letter then click” issue
+  // Auth
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) =>
+      setUser(data?.user ? { email: data.user.email, id: data.user.id } : null)
+    );
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) =>
+      setUser(session?.user ? { email: session.user.email, id: session.user.id } : null)
+    );
+    return () => subscription.unsubscribe();
+  }, [supabase]);
+
+  // When splash choice happens, route into the correct view
+  useEffect(() => {
+    if (!showSplash && firstChoice) {
+      // If logged in -> go builder
+      // If not -> go auth (but we still seed the prompt so it’s ready)
+      if (user) setView("builder");
+      else setView("auth");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showSplash, firstChoice, user]);
+
+  // history
+  useEffect(() => {
+    if (view === "builder" && projectId) fetchHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, view]);
+
+  // Scroll chat
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // ✅ Focus lock (fixes “1 letter then click”)
   useEffect(() => {
     if (view === "builder" && activeTab === "chat" && !isRunning) {
       const t = setTimeout(() => chatInputRef.current?.focus(), 0);
       return () => clearTimeout(t);
     }
   }, [view, activeTab, isRunning]);
-
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) =>
-      setUser(data?.user ? { email: data.user.email, id: data.user.id } : null)
-    );
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_, session) =>
-      setUser(session?.user ? { email: session.user.email, id: session.user.id } : null)
-    );
-    return () => subscription.unsubscribe();
-  }, [supabase]);
-
-  useEffect(() => {
-    if (view === "builder" && projectId) fetchHistory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, view]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
 
   async function fetchHistory() {
     const { data } = await supabase
@@ -280,6 +491,25 @@ export default function BuildlioApp() {
     if (!error) setView("builder");
   }
 
+  // Auto-seed the first prompt based on the splash choice
+  function seedPrompt(choice: BuildChoice) {
+    const prompt =
+      choice === "Website"
+        ? "Build a premium, modern marketing website. Ask me 2–3 smart questions, then generate the full site with strong copy, clear sections, testimonials, pricing, FAQ, and a bold CTA."
+        : choice === "Application"
+        ? "Design a web application UI. Ask what the app does, who it’s for, and the key pages. Then generate a professional app-style site with a clear navigation, feature highlights, pricing, FAQ, and a product-led story."
+        : choice === "Documents"
+        ? "Help me create professional business documents. Ask what industry and purpose (contract/policy/proposal). Then generate a clean site that presents documents, trust signals, and a contact/CTA section."
+        : choice === "Store"
+        ? "Build an ecommerce-style landing experience. Ask what products, price range, and audience. Then generate a modern store landing with product highlights, social proof, and clear CTA."
+        : choice === "Landing Page"
+        ? "Create a single high-converting landing page. Ask the offer, audience, and goal. Then generate a persuasive landing page with strong headline, benefits, proof, pricing, and CTA."
+        : "Ask me what I’m building, then generate a premium site with WOW-level copy and structure.";
+
+    // Put it into the chat input (and optionally show as first user message)
+    setChatInput(prompt);
+  }
+
   function exportHTML() {
     if (!snapshot) return;
     const currentPage = snapshot.pages?.find((p: any) => p.slug === activePageSlug) || snapshot.pages?.[0];
@@ -289,17 +519,20 @@ export default function BuildlioApp() {
     const siteName = snapshot.appName || "Your Site";
     const tagline = snapshot.tagline || "";
 
-    const htmlContent = `<!DOCTYPE html>
+    let htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${currentPage.title || siteName}</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style> body { font-family: system-ui, -apple-system, sans-serif; } </style>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; }
+  </style>
 </head>
 <body class="bg-zinc-50 text-zinc-900">
 
+  <!-- Navbar -->
   <nav class="bg-white border-b sticky top-0 z-50 shadow-sm">
     <div class="max-w-7xl mx-auto px-8 h-20 flex items-center justify-between">
       <div class="flex items-center gap-3">
@@ -313,6 +546,7 @@ export default function BuildlioApp() {
     </div>
   </nav>
 
+  <!-- Page Content -->
   <main>
     ${(currentPage.blocks || [])
       .map((block: any) => {
@@ -330,11 +564,13 @@ export default function BuildlioApp() {
             <div class="max-w-6xl mx-auto px-6">
               ${block.title ? `<h2 class="text-4xl font-semibold text-center mb-16">${block.title}</h2>` : ""}
               <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-                ${(block.items || []).map((item: any) => `
-                  <div class="bg-zinc-50 hover:bg-white border border-transparent hover:border-zinc-200 p-10 rounded-3xl transition-all">
-                    <h3 class="text-2xl font-semibold mb-4">${item.title}</h3>
-                    <p class="text-zinc-600">${item.description}</p>
-                  </div>`).join("")}
+                ${(block.items || [])
+                  .map((item: any) => `
+                    <div class="bg-zinc-50 hover:bg-white border border-transparent hover:border-zinc-200 p-10 rounded-3xl transition-all">
+                      <h3 class="text-2xl font-semibold mb-4">${item.title}</h3>
+                      <p class="text-zinc-600">${item.description}</p>
+                    </div>`)
+                  .join("")}
               </div>
             </div>
           </section>`;
@@ -342,11 +578,13 @@ export default function BuildlioApp() {
         if (block.type === "stats") return `
           <section class="py-20 bg-white border-t border-b">
             <div class="max-w-6xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-12 text-center">
-              ${(block.stats || []).map((s: any) => `
-                <div>
-                  <div class="text-6xl font-black text-cyan-600">${s.value}</div>
-                  <div class="text-zinc-600 mt-2 font-medium">${s.label}</div>
-                </div>`).join("")}
+              ${(block.stats || [])
+                .map((s: any) => `
+                  <div>
+                    <div class="text-6xl font-black text-cyan-600">${s.value}</div>
+                    <div class="text-zinc-600 mt-2 font-medium">${s.label}</div>
+                  </div>`)
+                .join("")}
             </div>
           </section>`;
 
@@ -355,17 +593,19 @@ export default function BuildlioApp() {
             <div class="max-w-6xl mx-auto px-6">
               <h2 class="text-4xl font-semibold text-center mb-16">What our customers say</h2>
               <div class="grid md:grid-cols-3 gap-8">
-                ${(block.items || []).map((t: any) => `
-                  <div class="bg-white p-10 rounded-3xl border">
-                    <p class="italic text-lg leading-relaxed">"${t.quote}"</p>
-                    <div class="mt-8 flex items-center gap-3">
-                      <div class="w-10 h-10 bg-zinc-200 rounded-full"></div>
-                      <div>
-                        <div class="font-semibold">${t.name}</div>
-                        <div class="text-sm text-zinc-500">${t.role}${t.company ? ` at ${t.company}` : ""}</div>
+                ${(block.items || [])
+                  .map((t: any) => `
+                    <div class="bg-white p-10 rounded-3xl border">
+                      <p class="italic text-lg leading-relaxed">"${t.quote}"</p>
+                      <div class="mt-8 flex items-center gap-3">
+                        <div class="w-10 h-10 bg-zinc-200 rounded-full"></div>
+                        <div>
+                          <div class="font-semibold">${t.name}</div>
+                          <div class="text-sm text-zinc-500">${t.role}${t.company ? ` at ${t.company}` : ""}</div>
+                        </div>
                       </div>
-                    </div>
-                  </div>`).join("")}
+                    </div>`)
+                  .join("")}
               </div>
             </div>
           </section>`;
@@ -375,18 +615,20 @@ export default function BuildlioApp() {
             <div class="max-w-6xl mx-auto px-6">
               <h2 class="text-4xl font-semibold text-center mb-16">Simple pricing</h2>
               <div class="grid md:grid-cols-3 gap-8">
-                ${(block.plans || []).map((plan: any) => `
-                  <div class="${plan.popular ? "ring-2 ring-cyan-500 scale-105" : ""} bg-white border rounded-3xl p-10 transition">
-                    <h3 class="text-2xl font-semibold">${plan.name}</h3>
-                    <div class="mt-6 flex items-baseline">
-                      <span class="text-6xl font-black">${plan.price}</span>
-                      <span class="ml-2 text-zinc-500">${plan.interval}</span>
-                    </div>
-                    <ul class="mt-10 space-y-4">
-                      ${(plan.features || []).map((f: string) => `<li class="flex items-center gap-3"><span class="text-emerald-500">✔</span> ${f}</li>`).join("")}
-                    </ul>
-                    <a href="#" class="mt-12 block text-center py-4 bg-zinc-900 text-white rounded-2xl font-semibold">${plan.cta || "Get started"}</a>
-                  </div>`).join("")}
+                ${(block.plans || [])
+                  .map((plan: any) => `
+                    <div class="${plan.popular ? "ring-2 ring-cyan-500 scale-105" : ""} bg-white border rounded-3xl p-10 transition">
+                      <h3 class="text-2xl font-semibold">${plan.name}</h3>
+                      <div class="mt-6 flex items-baseline">
+                        <span class="text-6xl font-black">${plan.price}</span>
+                        <span class="ml-2 text-zinc-500">${plan.interval}</span>
+                      </div>
+                      <ul class="mt-10 space-y-4">
+                        ${(plan.features || []).map((f: string) => `<li class="flex items-center gap-3"><span class="text-emerald-500">✔</span> ${f}</li>`).join("")}
+                      </ul>
+                      <a href="#" class="mt-12 block text-center py-4 bg-zinc-900 text-white rounded-2xl font-semibold">${plan.cta || "Get started"}</a>
+                    </div>`)
+                  .join("")}
               </div>
             </div>
           </section>`;
@@ -395,21 +637,23 @@ export default function BuildlioApp() {
           <section class="py-28 bg-zinc-50">
             <div class="max-w-3xl mx-auto px-6">
               <h2 class="text-4xl font-semibold text-center mb-16">Frequently asked questions</h2>
-              ${(block.items || []).map((item: any) => `
-                <details class="group border-b py-6">
-                  <summary class="flex justify-between items-center font-medium cursor-pointer list-none">
-                    ${item.q}
-                    <span class="text-xl group-open:rotate-45 transition">+</span>
-                  </summary>
-                  <p class="mt-4 text-zinc-600">${item.a}</p>
-                </details>`).join("")}
+              ${(block.items || [])
+                .map((item: any) => `
+                  <details class="group border-b py-6">
+                    <summary class="flex justify-between items-center font-medium cursor-pointer list-none">
+                      ${item.q}
+                      <span class="text-xl group-open:rotate-45 transition">+</span>
+                    </summary>
+                    <p class="mt-4 text-zinc-600">${item.a}</p>
+                  </details>`)
+                .join("")}
             </div>
           </section>`;
 
         if (block.type === "content") return `
           <section class="py-24 max-w-3xl mx-auto px-6 prose prose-zinc prose-lg">
             ${block.title ? `<h2>${block.title}</h2>` : ""}
-            <div>${block.body || block.content || ""}</div>
+            <div>${block.body || block.content}</div>
           </section>`;
 
         if (block.type === "cta") return `
@@ -426,6 +670,7 @@ export default function BuildlioApp() {
       .join("")}
   </main>
 
+  <!-- Footer -->
   <footer class="bg-zinc-950 text-zinc-400 py-20">
     <div class="max-w-7xl mx-auto px-8 grid grid-cols-2 md:grid-cols-4 gap-10">
       <div>
@@ -447,7 +692,6 @@ export default function BuildlioApp() {
     </div>
     <div class="text-center text-xs mt-20 opacity-60">© ${new Date().getFullYear()} ${siteName} • Built instantly with Buildlio</div>
   </footer>
-
 </body>
 </html>`;
 
@@ -497,6 +741,7 @@ export default function BuildlioApp() {
           .single();
 
         if (projError || !proj?.id) throw new Error(projError?.message || "Could not create project.");
+
         currentPid = proj.id;
         setProjectId(currentPid);
       }
@@ -747,7 +992,15 @@ export default function BuildlioApp() {
 
   return (
     <div className={`${inter.variable} ${fira.variable} h-screen flex flex-col bg-zinc-950 text-zinc-200 overflow-hidden`}>
-      {!splashDone && <SplashIntro onDone={() => setSplashDone(true)} />}
+      {showSplash && (
+        <SplashSploosh
+          onSelect={(choice) => {
+            setFirstChoice(choice);
+            seedPrompt(choice);
+            setShowSplash(false);
+          }}
+        />
+      )}
 
       <TopNav
         view={view}
@@ -766,8 +1019,7 @@ export default function BuildlioApp() {
                 <div className="text-8xl">⬡</div>
               </div>
               <h1 className="text-7xl font-black tracking-[-3.5px] leading-[1.05] mb-6">
-                Prompt.<br />
-                Build.<br />
+                Prompt.<br />Build.<br />
                 <span className="bg-gradient-to-r from-cyan-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">
                   Ship professional sites.
                 </span>
@@ -789,6 +1041,15 @@ export default function BuildlioApp() {
           <div className="flex-1 flex items-center justify-center bg-zinc-950">
             <div className="w-full max-w-md bg-zinc-900 border border-white/10 p-12 rounded-3xl">
               <h2 className="text-3xl font-black mb-8">Welcome back</h2>
+
+              {firstChoice && (
+                <div className="mb-6 rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-sm text-zinc-300">
+                  <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-400 mb-1">Selected</div>
+                  <div className="font-semibold">{firstChoice}</div>
+                  <div className="text-zinc-400 text-xs mt-1">Sign in to start building.</div>
+                </div>
+              )}
+
               <input
                 type="email"
                 placeholder="you@company.com"
@@ -849,6 +1110,7 @@ export default function BuildlioApp() {
                         </div>
                       </div>
                     ))}
+
                     {isRunning && (
                       <div className="flex justify-start">
                         <div className="bg-zinc-900 border border-white/10 rounded-3xl px-6 py-4 flex items-center gap-3 text-sm text-zinc-400">
@@ -899,7 +1161,11 @@ export default function BuildlioApp() {
                       <div
                         key={i}
                         className={`flex gap-4 ${
-                          log.type === "success" ? "text-emerald-400" : log.type === "error" ? "text-red-400" : "text-emerald-300"
+                          log.type === "success"
+                            ? "text-emerald-400"
+                            : log.type === "error"
+                            ? "text-red-400"
+                            : "text-emerald-300"
                         }`}
                       >
                         <span className="text-zinc-600 shrink-0 w-20">[{log.timestamp}]</span>
