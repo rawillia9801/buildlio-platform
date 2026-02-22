@@ -4,71 +4,111 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 60; // Vercel's hard limit
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY || "" });
 
 export async function POST(req: Request) {
   try {
-    const { projectId, messages, currentState, currentDbState } = await req.json();
+    const body = await req.json();
+    const projectId = String(body.projectId);
+    const messages = body.messages; 
+    
     const cookieStore = await cookies();
+    
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL || "",
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
       { cookies: { getAll: () => cookieStore.getAll(), setAll: () => {} } }
     );
 
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    const { data: authData } = await supabase.auth.getUser();
+    if (!authData?.user) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
 
+    // STRICTER SYSTEM PROMPT
     const systemPrompt = `
-      You are the Master ERP Intelligence for Southwest VA Chihuahua & HostMyWeb.
+      You are Buildlio, a friendly, personable AI website architect. 
+      Converse with the user to gather requirements before building.
       
-      SCHEMA CONTEXT:
-      - DOG BUSINESS: Tables [puppies, buyers, litters, bp_puppies, bp_buyers, breeding_dogs].
-      - HOSTING (HostMyWeb): Tables [client_sites, domains, invoices, support_tickets].
-      - E-COMMERCE: Tables [inventory, sales, inventory_sales, transactions].
-      - PERSONAL/BILLS: Tables [bills, ops_tasks, investments_stocks].
-
-      LIVE DATA SNAPSHOT:
-      ${JSON.stringify(currentDbState)}
-
-      CURRENT STATE (JSON):
-      ${JSON.stringify(currentState)}
-
-      INSTRUCTIONS:
-      1. Use the LIVE DATA SNAPSHOT to answer questions. If 'puppyData' has items, DO NOT say 0.
-      2. To calculate Hosting MRR: Sum 'total' from 'invoices' or count 'active' in 'client_sites'.
-      3. To calculate E-commerce: Use the 'sales' and 'inventory' tables.
-      4. Always return the 'state' object for the 3 JSON-based tabs (ecommerce, hosting, personal).
-      5. Generate 'db_operations' for any database changes.
-
-      RETURN JSON ONLY:
+      CRITICAL: You MUST ALWAYS respond with a single, valid JSON object. 
+      ABSOLUTELY NO plain text outside the JSON structure. Do not say "Here is your response" or use markdown blocks.
+      
+      If you need more info, respond exactly like this:
       {
-        "message": "Direct answer to user",
-        "state": { "ecommerce": {...}, "hosting": {...}, "personal": {...} },
-        "db_operations": []
+        "type": "chat",
+        "message": "Your friendly conversational reply and question here."
+      }
+      
+      If you have enough info to build, respond exactly like this:
+      {
+        "type": "build",
+        "message": "I've got everything I need! Generating your custom site now...",
+        "snapshot": {
+           "appName": "App Name",
+           "pages": [
+             {
+               "slug": "index",
+               "blocks": [
+                 { "type": "hero", "headline": "Title", "subhead": "Sub" },
+                 { "type": "features", "items": [{ "title": "Feat", "description": "Desc" }] }
+               ]
+             }
+           ]
+        }
       }
     `;
 
     const msg = await anthropic.messages.create({
-      model: "claude-3-5-sonnet-20240620", 
-      max_tokens: 4000, 
+      model: "claude-sonnet-4-6", 
+      max_tokens: 8000, 
       system: systemPrompt,
       messages: messages,
     });
 
-    const responseText = msg.content[0].type === 'text' ? msg.content[0].text : "";
-    const parsed = JSON.parse(responseText.substring(responseText.indexOf('{'), responseText.lastIndexOf('}') + 1));
-
-    // Execute DB Ops if generated
-    if (parsed.db_operations) {
-      for (const op of parsed.db_operations) {
-        if (op.action === "update") await supabase.from(op.table).update(op.data).match(op.match);
-        if (op.action === "insert") await supabase.from(op.table).insert(op.data);
+    const textBlock = msg.content.find((c) => c.type === "text");
+    const rawJson = textBlock?.type === "text" ? textBlock.text : "{}";
+    
+    let parsedResponse;
+    try {
+      // THE FIX: Aggressive JSON string extraction
+      const startIndex = rawJson.indexOf('{');
+      const endIndex = rawJson.lastIndexOf('}');
+      
+      if (startIndex === -1 || endIndex === -1) {
+        throw new Error("No JSON structure found in response.");
       }
+      
+      const cleanJson = rawJson.slice(startIndex, endIndex + 1);
+      parsedResponse = JSON.parse(cleanJson);
+      
+    } catch (parseErr) {
+      console.error("Failed AI Output:", rawJson); // Logs to Vercel so you can see what broke it
+      return NextResponse.json({ success: false, error: "Failed to parse AI response. Try sending your message again." }, { status: 500 });
     }
 
-    return NextResponse.json({ success: true, data: parsed });
-  } catch (err) {
-    return NextResponse.json({ success: false, error: String(err) }, { status: 500 });
+    // ONLY charge credits and save to DB if the AI decided to BUILD the site
+    if (parsedResponse.type === "build") {
+      const { error: rpcError } = await supabase.rpc("save_version_and_charge_credit", {
+        p_project_id: projectId,
+        p_owner_id: authData.user.id,
+        p_snapshot: parsedResponse.snapshot,
+        p_note: "Agentic Chat Build",
+        p_model: "claude-sonnet-4-6"
+      });
+
+      if (rpcError) {
+        return NextResponse.json({ success: false, error: rpcError.message }, { status: 500 });
+      }
+    }
+    
+    return NextResponse.json({ success: true, data: parsedResponse });
+
+  } catch (err: unknown) {
+    const errorMessage = err instanceof Error ? err.message : "Unknown error occurred";
+    return NextResponse.json({ success: false, error: errorMessage }, { status: 500 });
   }
 }

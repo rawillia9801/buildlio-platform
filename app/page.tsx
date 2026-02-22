@@ -1,463 +1,293 @@
-'use client';
+/* FILE: app/page.tsx
+   BUILDLIO.SITE — v4.0: Conversational Agent Architect
+*/
 
-import React, { useState, useEffect, useRef } from 'react';
-import { createClient } from '@supabase/supabase-js';
-import { Send, Plus, Trash2, Edit2, Download, Upload, Dog, Calendar, ShoppingCart, Globe, CheckCircle } from 'lucide-react';
+"use client";
 
-// Replace with your actual Supabase URL and anon key (use .env in production!)
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://your-project.supabase.co';
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'your-anon-key';
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import React, { useEffect, useMemo, useState, useRef } from "react";
+import { Inter, Fira_Code } from "next/font/google";
+import { createBrowserClient } from "@supabase/ssr";
 
-// Anthropic API key (MUST be handled server-side in production - shown here for demo only)
-const ANTHROPIC_API_KEY = process.env.NEXT_PUBLIC_ANTHROPIC_API_KEY || 'your-anthropic-key';
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
+const fira = Fira_Code({ subsets: ["latin"], variable: "--font-fira", display: "swap" });
 
-interface Puppy {
-  id: string;
-  name: string;
-  breed: string;
-  color: string;
-  gender: 'Male' | 'Female';
-  dob: string;
-  litter_id: string;
-  gooddog_id?: string;
-  status: 'Available' | 'Reserved' | 'Sold' | 'Archived';
-  price: number;
-  description?: string;
-  images?: string[];
-}
+type ViewState = "landing" | "auth" | "builder" | "pricing";
+type Message = { role: "user" | "assistant", content: string };
 
-interface Litter {
-  id: string;
-  name: string;
-  dam: string;
-  sire: string;
-  expected_dob?: string;
-  actual_dob?: string;
-  puppies_count: number;
-}
+export default function BuildlioApp() {
+  const [view, setView] = useState<ViewState>("landing");
 
-interface Task {
-  id: string;
-  title: string;
-  due_date?: string;
-  completed: boolean;
-  category: 'Breeding' | 'E-commerce' | 'Web Hosting' | 'Personal';
-}
+  const supabase = useMemo(() => createBrowserClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  ), []);
 
-interface Message {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-export default function ClaudePersonalAssistant() {
-  const [puppies, setPuppies] = useState<Puppy[]>([]);
-  const [litters, setLitters] = useState<Litter[]>([]);
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'puppies' | 'litters' | 'tasks' | 'chat'>('dashboard');
+  const [user, setUser] = useState<{ email?: string; id?: string } | null>(null);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
   
+  const [projectId, setProjectId] = useState("");
+  const [isRunning, setIsRunning] = useState(false);
+  const [snapshot, setSnapshot] = useState<any>(null);
+  const [history, setHistory] = useState<any[]>([]);
+  const [activePageSlug, setActivePageSlug] = useState("index");
+  
+  const [creditBalance, setCreditBalance] = useState(10);
+  
+  // --- CHAT AGENT STATE ---
+  const [chatInput, setChatInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([
-    { role: 'assistant', content: 'Hello! I\'m Claude, your personal AI assistant for the dog breeding, e-commerce, and web hosting businesses. How can I help you today? (I can track puppies, sync GoodDog data, manage tasks, etc.)' }
+    { role: "assistant", content: "Hi there! I'm Buildlio, your personal AI website architect. What kind of website are we building today?" }
   ]);
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  const [importModalOpen, setImportModalOpen] = useState(false);
-  const [importData, setImportData] = useState('');
-  const [importType, setImportType] = useState<'csv' | 'json'>('csv');
-
-  // Load data from Supabase
   useEffect(() => {
-    fetchPuppies();
-    fetchLitters();
-    fetchTasks();
-  }, []);
+    supabase.auth.getUser().then(({ data }) => setUser(data?.user ? { email: data.user.email, id: data.user.id } : null));
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => setUser(session?.user ? { email: session.user.email, id: session.user.id } : null));
+    return () => subscription.unsubscribe();
+  }, [supabase]);
 
-  const fetchPuppies = async () => {
-    const { data, error } = await supabase.from('puppies').select('*').order('dob', { ascending: false });
-    if (error) console.error('Supabase error:', error);
-    else setPuppies(data || []);
-  };
+  useEffect(() => {
+    if (view === "builder" && projectId) fetchHistory();
+  }, [projectId, view]);
 
-  const fetchLitters = async () => {
-    const { data, error } = await supabase.from('litters').select('*');
-    if (error) console.error(error);
-    else setLitters(data || []);
-  };
+  // Auto-scroll chat
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
-  const fetchTasks = async () => {
-    const { data, error } = await supabase.from('tasks').select('*').order('due_date');
-    if (error) console.error(error);
-    else setTasks(data || []);
-  };
+  async function fetchHistory() {
+    const { data } = await supabase.from("versions").select("*").eq("project_id", projectId).order("version_no", { ascending: false });
+    if (data) setHistory(data);
+  }
 
-  // Add puppy (called by AI or manual)
-  const addPuppy = async (puppy: Omit<Puppy, 'id'>) => {
-    const { error } = await supabase.from('puppies').insert([puppy]);
-    if (!error) fetchPuppies();
-    return !error;
-  };
+  async function handleAuth() {
+    const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password: loginPassword });
+    if (!error) setView("builder");
+  }
 
-  const removePuppy = async (id: string) => {
-    const { error } = await supabase.from('puppies').delete().eq('id', id);
-    if (!error) fetchPuppies();
-  };
+  function exportHTML() {
+    if (!snapshot) return;
+    const currentPage = snapshot.pages?.find((p: any) => p.slug === activePageSlug) || snapshot.pages?.[0];
+    if (!currentPage) return;
 
-  const updatePuppyStatus = async (id: string, status: Puppy['status']) => {
-    const { error } = await supabase.from('puppies').update({ status }).eq('id', id);
-    if (!error) fetchPuppies();
-  };
+    let htmlContent = `<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="UTF-8">\n<meta name="viewport" content="width=device-width, initial-scale=1.0">\n<title>${snapshot.appName || currentPage.slug}</title>\n<script src="https://cdn.tailwindcss.com"></script>\n</head>\n<body class="bg-slate-50 text-slate-900 font-sans">\n`;
 
-  // Simple CSV parser for GoodDog copy-paste (user can copy table from dashboard or export manually)
-  const parseGoodDogCSV = (csvText: string): Omit<Puppy, 'id'>[] => {
-    const lines = csvText.trim().split('\n');
-    const puppies: Omit<Puppy, 'id'>[] = [];
+    currentPage.blocks?.forEach((block: any) => {
+      if (block.type === 'hero') htmlContent += `<div class="py-24 px-10 text-center bg-white"><h1 class="text-5xl md:text-6xl font-black tracking-tight mb-6">${block.headline}</h1><p class="text-xl text-slate-600 max-w-2xl mx-auto">${block.subhead}</p><button class="mt-8 bg-slate-900 text-white px-8 py-4 rounded-full font-bold shadow-xl">${block.cta?.label || "Get Started"}</button></div>\n`;
+      else if (block.type === 'features') {
+        htmlContent += `<div class="py-20 px-10 max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">`;
+        block.items?.forEach((item: any) => htmlContent += `<div class="p-8 bg-slate-50 border border-slate-100 rounded-3xl"><h3 class="text-xl font-bold mb-3">${item.title}</h3><p class="text-slate-600 leading-relaxed">${item.description}</p></div>`);
+        htmlContent += `</div>\n`;
+      } else if (block.type === 'text') htmlContent += `<div class="max-w-3xl mx-auto py-16 px-10 prose prose-lg prose-slate">${block.content}</div>\n`;
+    });
+
+    htmlContent += `</body>\n</html>`;
+    const blob = new Blob([htmlContent], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${currentPage.slug}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function sendMessage() {
+    if (!chatInput.trim() || isRunning) return;
     
-    // Skip header, assume columns: Name,Breed,Color,Gender,DOB,Litter,GoodDogID,Price,Description
-    for (let i = 1; i < lines.length; i++) {
-      const cols = lines[i].split(',').map(c => c.trim().replace(/^"|"$/g, ''));
-      if (cols.length < 5) continue;
-      
-      puppies.push({
-        name: cols[0],
-        breed: cols[1] || 'Unknown',
-        color: cols[2] || '',
-        gender: (cols[3] as any) || 'Male',
-        dob: cols[4],
-        litter_id: cols[5] || 'unknown',
-        gooddog_id: cols[6] || undefined,
-        status: 'Available',
-        price: parseFloat(cols[7]) || 2500,
-        description: cols[8] || '',
-      });
-    }
-    return puppies;
-  };
-
-  const handleImportFromGoodDog = async () => {
-    let newPuppies: Omit<Puppy, 'id'>[] = [];
-    
-    if (importType === 'csv') {
-      newPuppies = parseGoodDogCSV(importData);
-    } else {
-      try {
-        newPuppies = JSON.parse(importData);
-      } catch (e) {
-        alert('Invalid JSON');
-        return;
-      }
-    }
-
-    if (newPuppies.length === 0) {
-      alert('No puppies parsed');
+    if (creditBalance <= 0) {
+      setMessages(prev => [...prev, { role: "assistant", content: "⚠️ You are out of credits. Please upgrade your account to continue building." }]);
       return;
     }
 
-    let success = 0;
-    for (const pup of newPuppies) {
-      const ok = await addPuppy(pup);
-      if (ok) success++;
-    }
-
-    alert(`Successfully imported ${success} puppies from GoodDog to your Supabase puppy portal!`);
-    setImportModalOpen(false);
-    setImportData('');
-    fetchPuppies();
-  };
-
-  // Claude chat with basic tool calling simulation (full agent loop in production via API route)
-  const sendMessage = async () => {
-    if (!input.trim()) return;
-    
-    const userMsg = { role: 'user' as const, content: input };
-    setMessages(prev => [...prev, userMsg]);
-    setInput('');
-    setIsLoading(true);
-
-    const newMessages = [...messages, userMsg];
+    const newMessages = [...messages, { role: "user" as const, content: chatInput }];
+    setMessages(newMessages);
+    setChatInput("");
+    setIsRunning(true);
 
     try {
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': ANTHROPIC_API_KEY,
-          'anthropic-version': '2023-06-01'
-        },
-        body: JSON.stringify({
-          model: 'claude-3-5-sonnet-20241022',
-          max_tokens: 2000,
-          temperature: 0.7,
-          system: `You are Claude, an expert AI personal assistant and agent for a dog breeding business (puppy sales via GoodDog + own portal), e-commerce store, and web hosting company.
-You keep track of EVERYTHING behind the scenes.
-Available tools (when user asks to add/remove/sync puppies, use them by outputting exactly in this format before your response):
-
-TOOL:ADD_PUPPY|{"name":"...", "breed":"...", ...} (full puppy object)
-TOOL:REMOVE_PUPPY|puppy-id-or-name
-TOOL:UPDATE_STATUS|puppy-id|new-status
-TOOL:LIST_PUPPIES (then I'll show you the list)
-TOOL:ADD_TASK|{"title":"...", "category":"Breeding", "due_date":"2026-03-01"}
-
-Your goal: sync GoodDog → Supabase puppy portal automatically when user pastes data or says "sync litter X". Be proactive, track inventory, sales, website updates, tasks, etc.`,
-          messages: newMessages
-        })
-      });
-
-      const data = await response.json();
-      let assistantReply = data.content[0].text;
-
-      // Simple tool parsing (in production move to secure API route + full loop)
-      if (assistantReply.includes('TOOL:')) {
-        const toolMatch = assistantReply.match(/TOOL:([A-Z_]+)\|(.*)/);
-        if (toolMatch) {
-          const [_, toolName, toolPayload] = toolMatch;
-          assistantReply = assistantReply.replace(/TOOL:.*$/m, '').trim();
-
-          if (toolName === 'ADD_PUPPY') {
-            try {
-              const pupData = JSON.parse(toolPayload);
-              await addPuppy(pupData);
-              assistantReply += '\n\n✅ Puppy added to Supabase and live on your puppy portal/website!';
-            } catch (e) {}
-          } else if (toolName === 'REMOVE_PUPPY') {
-            // Find by name or ID (simple)
-            const pup = puppies.find(p => p.id === toolPayload || p.name.toLowerCase() === toolPayload.toLowerCase());
-            if (pup) {
-              await removePuppy(pup.id);
-              assistantReply += '\n\n✅ Puppy removed from portal.';
-            }
-          } else if (toolName === 'UPDATE_STATUS') {
-            const [id, status] = toolPayload.split('|');
-            await updatePuppyStatus(id, status as any);
-            assistantReply += '\n\n✅ Status updated on website.';
-          }
-          // Add more tool handlers as needed
-        }
+      let currentPid = projectId;
+      if (!currentPid) {
+        if (!user) throw new Error("Please log in first.");
+        const { data: proj, error: projErr } = await supabase.from("projects").insert({ owner_id: user.id, name: "Chat Build", slug: `site-${Date.now()}` }).select("id").single();
+        if (projErr) throw new Error("Could not create project.");
+        currentPid = proj.id;
+        setProjectId(currentPid);
       }
 
-      setMessages(prev => [...prev, { role: 'assistant', content: assistantReply }]);
-    } catch (error) {
-      setMessages(prev => [...prev, { role: 'assistant', content: 'Sorry, I hit a rate limit or API issue. Try again or use the manual puppy tools above.' }]);
+      const res = await fetch("/api/claude-test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId: currentPid, messages: newMessages }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || "Server error");
+
+      const aiResponse = data.data;
+
+      // Add AI's text response to the chat window
+      setMessages(prev => [...prev, { role: "assistant", content: aiResponse.message }]);
+
+      // If the AI decided to build the site, update the canvas!
+      if (aiResponse.type === "build" && aiResponse.snapshot) {
+        setSnapshot(aiResponse.snapshot);
+        setCreditBalance(prev => prev - 1);
+        fetchHistory();
+      }
+
+    } catch (err: any) {
+      setMessages(prev => [...prev, { role: "assistant", content: `❌ Error: ${err.message}` }]);
+    } finally {
+      setIsRunning(false);
     }
+  }
 
-    setIsLoading(false);
-  };
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  const TopNav = () => (
+    <nav className="h-16 shrink-0 border-b border-white/10 bg-[#050505] flex items-center justify-between px-6 z-50">
+      <div className="flex items-center gap-8">
+        <button onClick={() => setView("landing")} className="font-black text-xl text-white flex items-center gap-2">
+          <div className="w-6 h-6 bg-cyan-500 rounded text-black flex items-center justify-center text-xs">⬡</div>
+          buildlio<span className="text-cyan-500">.site</span>
+        </button>
+        <div className="hidden md:flex gap-4">
+          <button onClick={() => setView("builder")} className={`text-sm font-bold transition-colors ${view === 'builder' ? 'text-cyan-400' : 'text-slate-400 hover:text-white'}`}>Builder</button>
+          <button onClick={() => setView("pricing")} className={`text-sm font-bold transition-colors ${view === 'pricing' ? 'text-cyan-400' : 'text-slate-400 hover:text-white'}`}>Pricing</button>
+        </div>
+      </div>
+      <div className="flex items-center gap-4">
+        {user ? (
+          <>
+            <div className="px-3 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-mono font-bold">{creditBalance} Credits</div>
+            <span className="text-xs text-slate-500">{user.email}</span>
+            <button onClick={() => supabase.auth.signOut()} className="text-xs text-slate-400 hover:text-white">Sign Out</button>
+          </>
+        ) : <button onClick={() => setView("auth")} className="text-sm font-bold text-slate-300 hover:text-white">Log In</button>}
+      </div>
+    </nav>
+  );
 
   return (
-    <div className="flex h-screen bg-zinc-950 text-white">
-      {/* Sidebar */}
-      <div className="w-64 bg-zinc-900 border-r border-zinc-800 flex flex-col">
-        <div className="p-6 border-b border-zinc-800">
-          <div className="flex items-center gap-3">
-            <Dog className="w-8 h-8 text-amber-400" />
-            <div>
-              <h1 className="text-2xl font-bold">Claude Agent</h1>
-              <p className="text-xs text-zinc-500">Your 24/7 Business Brain</p>
-            </div>
-          </div>
-        </div>
+    <div className={`${inter.variable} ${fira.variable} h-screen flex flex-col bg-[#020202] text-slate-300 font-sans overflow-hidden`}>
+      <TopNav />
 
-        <nav className="flex-1 p-4">
-          {[
-            { id: 'dashboard', label: 'Dashboard', icon: CheckCircle },
-            { id: 'puppies', label: 'Puppy Portal Sync', icon: Dog },
-            { id: 'litters', label: 'Litters', icon: Calendar },
-            { id: 'tasks', label: 'Tasks & Ops', icon: ShoppingCart },
-            { id: 'chat', label: 'Talk to Claude', icon: Send },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl mb-1 transition ${activeTab === tab.id ? 'bg-amber-500 text-black' : 'hover:bg-zinc-800'}`}
-            >
-              <tab.icon className="w-5 h-5" />
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </nav>
-
-        <div className="p-4 border-t border-zinc-800 text-xs text-zinc-500">
-          Works behind the scenes • GoodDog → Supabase sync • All data in your control
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top Bar */}
-        <div className="h-16 border-b border-zinc-800 bg-zinc-900 flex items-center px-8 justify-between">
-          <h2 className="text-xl font-semibold capitalize">{activeTab}</h2>
-          <div className="flex items-center gap-4 text-sm">
-            <div className="px-3 py-1 bg-emerald-500/10 text-emerald-400 rounded-full flex items-center gap-1">
-              <div className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
-              Claude Online
-            </div>
-          </div>
-        </div>
-
-        {/* Dashboard Tab */}
-        {activeTab === 'dashboard' && (
-          <div className="p-8 overflow-auto">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className="bg-zinc-900 rounded-3xl p-8">
-                <div className="text-5xl font-bold mb-2">{puppies.filter(p => p.status === 'Available').length}</div>
-                <div className="text-zinc-400">Puppies Available (Synced to portal)</div>
+      <main className="flex-1 relative overflow-hidden">
+        
+        {/* LANDING & PRICING PAGES REMAIN INTACT... */}
+        {view === "landing" && (
+          <div className="h-full overflow-y-auto p-10 bg-[radial-gradient(#ffffff0a_1px,transparent_1px)] [background-size:24px_24px]">
+            <div className="max-w-4xl mx-auto text-center space-y-8 mt-10">
+              <h1 className="text-6xl font-black text-white">Prompt to Production <span className="text-cyan-500">in Seconds.</span></h1>
+              <div className="flex justify-center gap-4 pt-8">
+                <button onClick={() => user ? setView("builder") : setView("auth")} className="px-8 py-4 bg-cyan-500 text-black rounded-xl font-black text-lg hover:bg-cyan-400">Start Building</button>
               </div>
-              <div className="bg-zinc-900 rounded-3xl p-8">
-                <div className="text-5xl font-bold mb-2">{litters.length}</div>
-                <div className="text-zinc-400">Active Litters</div>
-              </div>
-              <div className="bg-zinc-900 rounded-3xl p-8">
-                <div className="text-5xl font-bold mb-2">{tasks.filter(t => !t.completed).length}</div>
-                <div className="text-zinc-400">Open Tasks</div>
-              </div>
-            </div>
-
-            <div className="mt-10">
-              <h3 className="text-lg mb-4">Quick GoodDog → Portal Sync</h3>
-              <button
-                onClick={() => setImportModalOpen(true)}
-                className="flex items-center gap-3 bg-amber-500 hover:bg-amber-600 text-black px-8 py-4 rounded-2xl font-medium"
-              >
-                <Upload className="w-5 h-5" />
-                Import Litter/Puppies from GoodDog (CSV or JSON paste)
-              </button>
-              <p className="text-xs text-zinc-500 mt-3">Copy table from GoodDog dashboard → paste here. I\'ll parse and push to Supabase instantly.</p>
             </div>
           </div>
         )}
 
-        {/* Puppies Tab - Live Portal Data */}
-        {activeTab === 'puppies' && (
-          <div className="p-8 overflow-auto">
-            <div className="flex justify-between mb-6">
-              <h3 className="text-2xl">Puppy Portal ({puppies.length} total)</h3>
-              <button
-                onClick={() => setImportModalOpen(true)}
-                className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 px-6 py-3 rounded-xl"
-              >
-                <Upload className="w-4 h-4" /> Sync from GoodDog
-              </button>
-            </div>
-
-            <div className="bg-zinc-900 rounded-3xl overflow-hidden">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-zinc-800">
-                    <th className="text-left p-6">Name</th>
-                    <th className="text-left p-6">Litter</th>
-                    <th className="text-left p-6">GoodDog ID</th>
-                    <th className="text-left p-6">Status</th>
-                    <th className="text-left p-6">Price</th>
-                    <th className="w-32"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {puppies.map(pup => (
-                    <tr key={pup.id} className="border-b border-zinc-800 hover:bg-zinc-800/50">
-                      <td className="p-6 font-medium">{pup.name}</td>
-                      <td className="p-6 text-zinc-400">{pup.litter_id}</td>
-                      <td className="p-6 text-amber-400 font-mono text-sm">{pup.gooddog_id || '—'}</td>
-                      <td className="p-6">
-                        <select 
-                          value={pup.status}
-                          onChange={(e) => updatePuppyStatus(pup.id, e.target.value as any)}
-                          className="bg-zinc-800 text-sm px-3 py-1 rounded-lg"
-                        >
-                          {['Available','Reserved','Sold','Archived'].map(s => (
-                            <option key={s} value={s}>{s}</option>
-                          ))}
-                        </select>
-                      </td>
-                      <td className="p-6 font-mono">${pup.price}</td>
-                      <td className="p-6 flex gap-2">
-                        <button onClick={() => removePuppy(pup.id)} className="text-red-400 hover:text-red-500">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {view === "auth" && (
+          <div className="h-full flex items-center justify-center">
+            <div className="w-full max-w-sm bg-[#050505] border border-white/10 p-8 rounded-2xl">
+              <h2 className="text-2xl font-black text-white mb-6">Access Account</h2>
+              <input type="email" placeholder="Email" className="w-full mb-4 bg-[#0a0a0f] border border-white/10 rounded-lg p-3 text-white" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} />
+              <input type="password" placeholder="Password" className="w-full mb-4 bg-[#0a0a0f] border border-white/10 rounded-lg p-3 text-white" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} />
+              <button onClick={handleAuth} className="w-full py-3 bg-cyan-500 text-black font-bold rounded-lg">Authenticate</button>
             </div>
           </div>
         )}
 
-        {/* Litters & Tasks tabs (simple placeholders - extend similarly) */}
-        {activeTab === 'litters' && <div className="p-8">Litters management (add similar Supabase table + UI)</div>}
-        {activeTab === 'tasks' && <div className="p-8">All tasks across breeding, e-comm, hosting</div>}
-
-        {/* Chat Tab - The AI Agent Core */}
-        {activeTab === 'chat' && (
-          <div className="flex-1 flex flex-col">
-            <div className="flex-1 p-8 overflow-auto space-y-8" id="chat-window">
-              {messages.map((msg, i) => (
-                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-3xl px-6 py-4 rounded-3xl ${msg.role === 'user' ? 'bg-amber-500 text-black' : 'bg-zinc-900'}`}>
-                    {msg.content}
-                  </div>
-                </div>
-              ))}
-              {isLoading && <div className="text-zinc-500">Claude is thinking...</div>}
-              <div ref={chatEndRef} />
-            </div>
-
-            <div className="p-6 border-t border-zinc-800 bg-zinc-900">
-              <div className="flex gap-3">
-                <input
-                  type="text"
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && sendMessage()}
-                  placeholder="Tell Claude anything (e.g. 'Sync my new litter from GoodDog', 'Remove puppy Luna', 'List all available puppies', 'Remind me to update website hosting')"
-                  className="flex-1 bg-zinc-800 border border-zinc-700 rounded-2xl px-6 py-4 focus:outline-none focus:border-amber-500"
-                />
-                <button
-                  onClick={sendMessage}
-                  disabled={isLoading}
-                  className="bg-amber-500 hover:bg-amber-600 text-black px-8 rounded-2xl flex items-center gap-2 disabled:opacity-50"
-                >
-                  <Send className="w-5 h-5" />
-                </button>
-              </div>
-              <p className="text-center text-[10px] text-zinc-600 mt-3">Claude has direct Supabase tools — just ask!</p>
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Import Modal */}
-      {importModalOpen && (
-        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50">
-          <div className="bg-zinc-900 rounded-3xl w-[620px] p-8">
-            <h3 className="text-2xl mb-6">GoodDog → Your Puppy Portal Sync</h3>
+        {/* BUILDER PAGE */}
+        {view === "builder" && (
+          <div className="h-full w-full flex">
             
-            <div className="flex gap-4 mb-6">
-              <button onClick={() => setImportType('csv')} className={`flex-1 py-3 rounded-2xl ${importType === 'csv' ? 'bg-amber-500 text-black' : 'bg-zinc-800'}`}>CSV (copy table)</button>
-              <button onClick={() => setImportType('json')} className={`flex-1 py-3 rounded-2xl ${importType === 'json' ? 'bg-amber-500 text-black' : 'bg-zinc-800'}`}>JSON</button>
-            </div>
+            {/* LEFT PANEL: CONVERSATIONAL AGENT */}
+            <aside className="w-[450px] border-r border-white/10 bg-[#050505] flex flex-col shadow-2xl z-10">
+              <div className="p-4 border-b border-white/10 bg-[#0a0a0f] flex justify-between items-center">
+                <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div> Buildlio Agent
+                </div>
+                <button onClick={() => { setMessages([{ role: "assistant", content: "Let's start a new project! What are we building?" }]); setSnapshot(null); setProjectId(""); }} className="text-cyan-400 text-xs hover:text-cyan-300">New Chat ⟳</button>
+              </div>
 
-            <textarea
-              value={importData}
-              onChange={(e) => setImportData(e.target.value)}
-              placeholder={importType === 'csv' ? 
-                "Name,Breed,Color,Gender,DOB,Litter,GoodDogID,Price,Description\nLuna,Golden Retriever,Cream,Female,2026-01-15,Litter-A,GD-39281,3200,Super sweet girl..." 
-                : '[{"name":"Luna", "breed":"Golden Retriever", ...}]'}
-              className="w-full h-72 bg-zinc-950 border border-zinc-700 rounded-2xl p-6 font-mono text-sm resize-none"
-            />
+              {/* CHAT WINDOW */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-6 bg-[#020202]">
+                {messages.map((msg, i) => (
+                  <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div className={`max-w-[85%] rounded-2xl p-4 text-sm leading-relaxed ${msg.role === 'user' ? 'bg-cyan-600 text-white rounded-br-none' : 'bg-[#0a0a0f] border border-white/10 text-slate-300 rounded-bl-none'}`}>
+                      {msg.role === 'assistant' && <div className="text-[10px] font-black text-cyan-500 mb-1">BUILDLIO</div>}
+                      {msg.content}
+                    </div>
+                  </div>
+                ))}
+                {isRunning && (
+                  <div className="flex justify-start">
+                    <div className="bg-[#0a0a0f] border border-white/10 rounded-2xl rounded-bl-none p-4 text-sm text-slate-400 flex items-center gap-2">
+                      <span className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce"></span>
+                      <span className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce delay-75"></span>
+                      <span className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-bounce delay-150"></span>
+                    </div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
 
-            <div className="flex gap-4 mt-8">
-              <button onClick={() => setImportModalOpen(false)} className="flex-1 py-4 border border-zinc-700 rounded-2xl">Cancel</button>
-              <button onClick={handleImportFromGoodDog} className="flex-1 py-4 bg-amber-500 hover:bg-amber-600 text-black rounded-2xl font-medium">Sync to Supabase + Website</button>
-            </div>
-            <p className="text-center text-xs text-zinc-500 mt-4">Puppies appear instantly on your public puppy portal (Supabase-powered)</p>
+              {/* CHAT INPUT */}
+              <div className="p-4 border-t border-white/10 bg-[#0a0a0f]">
+                <div className="relative">
+                  <input 
+                    value={chatInput} 
+                    onChange={e => setChatInput(e.target.value)} 
+                    onKeyDown={e => e.key === 'Enter' && sendMessage()}
+                    placeholder="Message Buildlio..." 
+                    className="w-full bg-[#050505] border border-white/10 rounded-xl pl-4 pr-12 py-4 text-sm text-white focus:border-cyan-500 outline-none" 
+                    disabled={isRunning} 
+                  />
+                  <button onClick={sendMessage} disabled={isRunning || !chatInput.trim()} className="absolute right-2 top-2 bottom-2 w-10 bg-cyan-500 hover:bg-cyan-400 text-black rounded-lg flex items-center justify-center transition-colors disabled:opacity-50">
+                    ➔
+                  </button>
+                </div>
+                <div className="text-center mt-3 text-[10px] text-slate-600">The AI will generate the site when it has enough info.</div>
+              </div>
+            </aside>
+
+            {/* RIGHT PANEL: PREVIEW */}
+            <main className="flex-1 bg-[#f8fafc] flex flex-col relative">
+              <header className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-4 z-10 shadow-sm">
+                <div className="flex gap-2">
+                  {snapshot?.pages?.map((p: any) => (
+                    <button key={p.slug} onClick={() => setActivePageSlug(p.slug)} className={`px-3 py-1 rounded text-xs font-bold capitalize ${activePageSlug === p.slug ? 'bg-slate-100 text-slate-900' : 'text-slate-500 hover:text-slate-900'}`}>{p.slug}</button>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <button onClick={exportHTML} disabled={!snapshot} className={`text-xs font-bold px-3 py-1.5 rounded border transition-colors ${snapshot ? "text-slate-900 border-slate-300 hover:bg-slate-50" : "text-slate-400 border-slate-200 cursor-not-allowed"}`}>Export HTML</button>
+                </div>
+              </header>
+
+              <div className="flex-1 overflow-y-auto bg-slate-50 text-slate-900">
+                {!snapshot ? (
+                  <div className="h-full flex flex-col items-center justify-center bg-[radial-gradient(#e2e8f0_1px,transparent_1px)] [background-size:24px_24px]">
+                    <div className="w-16 h-16 bg-white border border-slate-200 rounded-2xl flex items-center justify-center shadow-lg mb-4 text-cyan-500 text-3xl font-black">⬡</div>
+                    <p className="text-sm font-bold text-slate-600">Chat with Buildlio to begin.</p>
+                  </div>
+                ) : (
+                  <div className="animate-in fade-in duration-500 pb-20">
+                    {snapshot.pages?.find((p: any) => p.slug === activePageSlug)?.blocks?.map((block: any, i: number) => (
+                      <div key={i} className="group relative border-b border-slate-200">
+                        {block.type === 'hero' && (
+                          <div className="py-24 px-10 text-center bg-white"><h1 className="text-5xl md:text-6xl font-black tracking-tight mb-6">{block.headline}</h1><p className="text-xl text-slate-600 max-w-2xl mx-auto">{block.subhead}</p></div>
+                        )}
+                        {block.type === 'features' && (
+                          <div className="py-20 px-10 max-w-6xl mx-auto grid grid-cols-1 md:grid-cols-3 gap-8">{block.items?.map((item: any, j: number) => <div key={j} className="p-8 bg-slate-50 border border-slate-100 rounded-3xl"><h3 className="text-xl font-bold mb-3">{item.title}</h3><p className="text-slate-600">{item.description}</p></div>)}</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </main>
           </div>
-        </div>
-      )}
+        )}
+      </main>
     </div>
   );
 }
