@@ -1,16 +1,15 @@
 /* FILE: app/page.tsx
-BUILDLIO.SITE — v5.2: Personal Splash Pacing + White Build Console + Sploosh Choice + Build-Type Wiring + Input Stability
+BUILDLIO.SITE — v5.4: Build-Type Rendering (Documents vs Website) + Correct Export
 
 CHANGELOG
-- v5.2
-  * FIX: Chat input “1 letter at a time” / focus drop risk by preventing heavy Preview re-render on every keystroke (memoized preview + lighter rerenders)
-  * ADD: BuildType wiring end-to-end:
-      - Splash choice sets buildType
-      - Auto-prompt includes TYPE: <...> tag for backend compatibility
-      - /api/claude-test fetch sends buildType in JSON body (if your route supports it now or later)
-  * KEEP: solid white splash → corner ripple → personal typewriter pacing → choices float up → sploosh sink (no cheesy text)
-  * KEEP: WHITE build console with buildlio> prompt
-  * KEEP: auto-send after selection (and after login), builder/preview/export/logs/history/credits
+- v5.4
+  * FIX: Documents build now renders a document preview (not a website placeholder)
+  * NEW: Document snapshot support (snapshot.documents[])
+  * NEW: Export Document (HTML) when buildType=document
+  * KEEP: Website/store/landing/application/other render website preview + export full HTML
+  * KEEP: Splash choice -> buildType wiring
+  * KEEP: White build console, tabs, history, credits badge
+  * KEEP: Input stability (memoized preview)
 
 ANCHOR:CONFIG
 - Requires NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -33,14 +32,51 @@ type UserLite = { email?: string; id?: string } | null;
 type BuildChoice = "Website" | "Application" | "Documents" | "Store" | "Landing Page" | "Other";
 type BuildType = "website" | "application" | "document" | "store" | "landing_page" | "other";
 
+/* -----------------------------
+ANCHOR:SNAPSHOT_TYPES
+-------------------------------- */
+type SiteSnapshot = {
+  appName: string;
+  tagline?: string;
+  navigation?: { items: string[] };
+  meta?: { buildType?: BuildType; intent?: string };
+  pages: Array<{ slug: string; title?: string; blocks: any[] }>;
+};
+
+type DocumentItem = {
+  id: string;
+  title: string;
+  category:
+    | "letter"
+    | "cease_and_desist"
+    | "bill_of_sale"
+    | "health_guarantee"
+    | "contract"
+    | "policy"
+    | "packet"
+    | "proposal"
+    | "other";
+  jurisdiction?: string;
+  format: "html";
+  body_html: string;
+  fields?: Array<{ key: string; label: string; type: "text" | "date" | "number" | "checkbox"; required?: boolean }>;
+  warnings?: string[];
+};
+
+type DocSnapshot = {
+  appName: string;
+  meta?: { buildType?: BuildType; intent?: string };
+  documents: DocumentItem[];
+};
+
+type AnySnapshot = SiteSnapshot | DocSnapshot;
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
-
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
-
 function choiceToBuildType(choice: BuildChoice): BuildType {
   if (choice === "Website") return "website";
   if (choice === "Application") return "application";
@@ -49,34 +85,30 @@ function choiceToBuildType(choice: BuildChoice): BuildType {
   if (choice === "Landing Page") return "landing_page";
   return "other";
 }
+function isDocSnapshot(s: AnySnapshot | null): s is DocSnapshot {
+  return !!s && Array.isArray((s as any).documents);
+}
+function isSiteSnapshot(s: AnySnapshot | null): s is SiteSnapshot {
+  return !!s && Array.isArray((s as any).pages);
+}
 
 /* ------------------------------------------------
-ANCHOR:SPLASH — solid white → corner ripple → personal typewriter → choices → sploosh sink
+ANCHOR:SPLASH — (unchanged)
 --------------------------------------------------- */
-function BuildlioSplash({
-  onSelect,
-}: {
-  onSelect: (choice: BuildChoice) => void;
-}) {
+function BuildlioSplash({ onSelect }: { onSelect: (choice: BuildChoice) => void }) {
   const choices: Array<{ label: BuildChoice; desc: string }> = [
     { label: "Website", desc: "A full professional website with pages, sections, and polish." },
     { label: "Application", desc: "A product-style build with screens, flow, and structure." },
-    { label: "Documents", desc: "Contracts, policies, packets, proposals — clean and professional." },
+    { label: "Documents", desc: "Letters, contracts, policies — clean and professional." },
     { label: "Store", desc: "A conversion-focused product landing experience." },
     { label: "Landing Page", desc: "One high-performing page for an offer or campaign." },
     { label: "Other", desc: "Anything else — you describe it, I’ll shape it." },
   ];
 
-  // 0 = pure white
-  // 1 = corner ripple begins (still white)
-  // 2 = type “Hi!” (pause) → finish message
-  // 3 = type secondary reassurance line
-  // 4 = choices float up
-  // 5 = exiting (sploosh)
   const [phase, setPhase] = useState<0 | 1 | 2 | 3 | 4 | 5>(0);
 
   const line1Full =
-    "Hi! I’m Buildlio — your AI chat website builder. Let’s turn your dream into a reality. What are we creating today?";
+    "Hi! I’m Buildlio — your AI chat builder. Let’s turn your dream into a reality. What are we creating today?";
   const line2Full = "I’ll guide you step-by-step.";
 
   const [typed1, setTyped1] = useState("");
@@ -86,11 +118,7 @@ function BuildlioSplash({
   const [sinkKey, setSinkKey] = useState<string | null>(null);
 
   const rootRef = useRef<HTMLDivElement>(null);
-
-  // Corner origin: subtle “under the page” ripple
   const origin = useMemo(() => ({ x: 92, y: 16 }), []);
-
-  // Click ripple origin
   const [sploosh, setSploosh] = useState<{ x: number; y: number; active: boolean }>({
     x: origin.x,
     y: origin.y,
@@ -99,7 +127,6 @@ function BuildlioSplash({
 
   useEffect(() => {
     let alive = true;
-
     (async () => {
       await sleep(650);
       if (!alive) return;
@@ -173,7 +200,6 @@ function BuildlioSplash({
       className="fixed inset-0 z-[9999] bg-white text-zinc-900 overflow-hidden"
       style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
     >
-      {/* Corner ripple */}
       {cornerRippleOn && (
         <div
           className="absolute inset-0 pointer-events-none"
@@ -190,7 +216,6 @@ function BuildlioSplash({
         </div>
       )}
 
-      {/* Click sploosh ripple */}
       {sploosh.active && (
         <div
           className="absolute inset-0 pointer-events-none"
@@ -208,7 +233,6 @@ function BuildlioSplash({
         </div>
       )}
 
-      {/* Typed content */}
       <div className="relative h-full w-full flex items-center justify-center px-6">
         <div className="w-full max-w-5xl">
           <div className="min-h-[170px]">
@@ -228,7 +252,6 @@ function BuildlioSplash({
             )}
           </div>
 
-          {/* Choices */}
           {phase >= 4 && (
             <div
               className={`mt-12 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 ${
@@ -497,7 +520,7 @@ function BuildlioSplash({
 }
 
 /* -----------------------------
-Top Navigation
+Top Navigation (unchanged)
 -------------------------------- */
 function TopNav({
   view,
@@ -561,16 +584,16 @@ function TopNav({
 }
 
 /* -----------------------------
-Memoized Preview (prevents heavy rerenders while typing)
+Memoized Website Preview (unchanged behavior)
 -------------------------------- */
 const SitePreview = memo(function SitePreview({
   snapshot,
   activePageSlug,
 }: {
-  snapshot: any;
+  snapshot: SiteSnapshot | null;
   activePageSlug: string;
 }) {
-  const currentPage = snapshot?.pages?.find((p: any) => p.slug === activePageSlug) || snapshot?.pages?.[0];
+  const currentPage = snapshot?.pages?.find((p) => p.slug === activePageSlug) || snapshot?.pages?.[0];
   const navItems = snapshot?.navigation?.items || ["Home", "Features", "Pricing", "About", "Contact"];
   const siteName = snapshot?.appName || "Your Site";
   const tagline = snapshot?.tagline || "";
@@ -596,7 +619,7 @@ const SitePreview = memo(function SitePreview({
               {tagline && <div className="text-sm text-zinc-500 max-w-72 leading-tight">{tagline}</div>}
             </div>
             <div className="flex items-center gap-9 text-sm font-medium text-zinc-700">
-              {navItems.map((item: string, i: number) => (
+              {navItems.map((item, i) => (
                 <a key={i} href="#" className="hover:text-cyan-600 transition-colors">
                   {item}
                 </a>
@@ -789,13 +812,95 @@ const SitePreview = memo(function SitePreview({
                   </div>
                 </div>
               </div>
-              <div className="text-center text-xs mt-16 opacity-60">
-                © {new Date().getFullYear()} — Instant professional websites by Buildlio
-              </div>
+              <div className="text-center text-xs mt-16 opacity-60">© {new Date().getFullYear()} — Instant professional websites by Buildlio</div>
             </footer>
           </div>
         )}
       </div>
+    </div>
+  );
+});
+
+/* -----------------------------
+ANCHOR:DOCUMENT_PREVIEW
+-------------------------------- */
+const DocumentPreview = memo(function DocumentPreview({
+  snapshot,
+  activeDocId,
+  onSelectDoc,
+}: {
+  snapshot: DocSnapshot | null;
+  activeDocId: string;
+  onSelectDoc: (id: string) => void;
+}) {
+  const docs = snapshot?.documents || [];
+  const active = docs.find((d) => d.id === activeDocId) || docs[0];
+
+  return (
+    <div className="flex-1 bg-zinc-950 flex flex-col relative overflow-hidden">
+      <div className="h-11 bg-zinc-900 flex items-center px-4 border-b border-zinc-800">
+        <div className="flex gap-1.5">
+          <div className="w-3 h-3 bg-red-500 rounded-full" />
+          <div className="w-3 h-3 bg-yellow-500 rounded-full" />
+          <div className="w-3 h-3 bg-green-500 rounded-full" />
+        </div>
+        <div className="mx-auto bg-zinc-800 text-zinc-400 text-[10px] px-10 py-px rounded-full font-mono">
+          Document Preview • Print-ready HTML
+        </div>
+      </div>
+
+      {!snapshot ? (
+        <div className="flex-1 overflow-auto bg-white">
+          <div className="h-[calc(100vh-110px)] flex flex-col items-center justify-center bg-zinc-50">
+            <div className="text-8xl opacity-10 mb-6">⬡</div>
+            <p className="text-xl font-medium text-zinc-400">Chat with Buildlio — a professional document will appear here</p>
+          </div>
+        </div>
+      ) : (
+        <div className="flex-1 overflow-hidden bg-zinc-200">
+          {/* Doc tabs */}
+          <div className="h-14 bg-zinc-900 border-b border-white/10 flex items-center px-6 gap-2 overflow-x-auto">
+            {docs.map((d) => (
+              <button
+                key={d.id}
+                onClick={() => onSelectDoc(d.id)}
+                className={`px-5 py-2 text-sm rounded-2xl transition whitespace-nowrap ${
+                  active?.id === d.id ? "bg-white text-black font-semibold" : "hover:bg-white/10 text-zinc-200"
+                }`}
+              >
+                {d.title}
+              </button>
+            ))}
+          </div>
+
+          {/* Paper */}
+          <div className="flex-1 overflow-auto p-8">
+            <div className="mx-auto max-w-[900px] bg-white shadow-2xl rounded-2xl border border-zinc-200 overflow-hidden">
+              <div className="px-10 py-8 border-b bg-zinc-50">
+                <div className="text-xs uppercase tracking-[0.2em] text-zinc-500">Draft</div>
+                <div className="mt-2 text-2xl font-black text-zinc-900">{active?.title || "Document"}</div>
+                <div className="mt-2 text-sm text-zinc-600">
+                  {active?.jurisdiction ? `Jurisdiction: ${active.jurisdiction}` : "Jurisdiction: (not specified)"} • Category:{" "}
+                  {active?.category || "other"}
+                </div>
+                {active?.warnings?.length ? (
+                  <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                    {active.warnings[0]}
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="px-10 py-10">
+                <div className="prose prose-zinc prose-lg max-w-none" dangerouslySetInnerHTML={{ __html: active?.body_html || "" }} />
+              </div>
+            </div>
+
+            <div className="mt-6 text-center text-xs text-zinc-700">
+              Tip: export the draft and customize bracketed fields like <span className="font-mono">[Name]</span> and <span className="font-mono">[Date]</span>.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 });
@@ -826,9 +931,16 @@ export default function BuildlioApp() {
 
   const [projectId, setProjectId] = useState("");
   const [isRunning, setIsRunning] = useState(false);
-  const [snapshot, setSnapshot] = useState<any>(null);
+
+  const [snapshot, setSnapshot] = useState<AnySnapshot | null>(null);
   const [history, setHistory] = useState<any[]>([]);
+
+  // Website page state
   const [activePageSlug, setActivePageSlug] = useState("index");
+
+  // Document state
+  const [activeDocId, setActiveDocId] = useState("doc_1");
+
   const [creditBalance, setCreditBalance] = useState(10);
 
   // Chat
@@ -836,8 +948,7 @@ export default function BuildlioApp() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content:
-        "Hi, I’m Buildlio. Tell me what you’re building — and I’ll design a polished, high-converting site with a real professional structure.",
+      content: "Hi, I’m Buildlio. Tell me what you’re building — and I’ll generate a polished result with a real professional structure.",
     },
   ]);
 
@@ -878,7 +989,6 @@ export default function BuildlioApp() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Focus stability (only when switching into builder/chat, not on every keystroke)
   useEffect(() => {
     if (view === "builder" && activeTab === "chat" && !isRunning) {
       const t = window.setTimeout(() => chatInputRef.current?.focus(), 0);
@@ -904,11 +1014,7 @@ export default function BuildlioApp() {
   }, [view, pendingPrompt, user, isRunning, hasAutoSent]);
 
   async function fetchHistory() {
-    const { data } = await supabase
-      .from("versions")
-      .select("*")
-      .eq("project_id", projectId)
-      .order("version_no", { ascending: false });
+    const { data } = await supabase.from("versions").select("*").eq("project_id", projectId).order("version_no", { ascending: false });
     if (data) setHistory(data);
   }
 
@@ -918,7 +1024,6 @@ export default function BuildlioApp() {
   }
 
   function makePrompt(choice: BuildChoice) {
-    // Include TYPE tag so backend can route behavior even if it doesn't accept buildType yet.
     const typeTag = `TYPE: ${choiceToBuildType(choice)}`;
 
     if (choice === "Website") {
@@ -927,7 +1032,7 @@ export default function BuildlioApp() {
         "I want a premium website.",
         "Ask me 3 calm, smart questions (industry, audience, and #1 goal).",
         "Then generate a full multi-page site with WOW-level copy: hero, benefits, credibility, testimonials, pricing, FAQ, and a strong CTA.",
-        "Make the writing feel human, specific, and confident — not generic marketing filler.",
+        "Make the writing feel premium and specific — like a real agency wrote it.",
       ].join("\n");
     }
     if (choice === "Application") {
@@ -940,12 +1045,13 @@ export default function BuildlioApp() {
       ].join("\n");
     }
     if (choice === "Documents") {
+      // IMPORTANT: documents should produce documents, not a website
       return [
         typeTag,
-        "I want to create professional documents.",
-        "Ask me what type (contract/policy/packet/proposal), industry, and tone.",
-        "Then generate a professional site that presents the documents, credibility, process, FAQ, and a clear CTA.",
-        "Writing must feel premium and specific — like a real firm wrote it.",
+        "I want to draft professional documents and letters (not a website).",
+        "Ask me: (1) document type (letter/cease & desist/bill of sale/health guarantee/contract/policy), (2) jurisdiction/state, (3) parties + key facts.",
+        "Then generate the document as a clean, print-ready draft with headings/sections, placeholders like [Name], and a short disclaimer (not legal advice).",
+        "Output should be the actual document content ready to export.",
       ].join("\n");
     }
     if (choice === "Store") {
@@ -953,7 +1059,7 @@ export default function BuildlioApp() {
         typeTag,
         "I want a store / product landing experience.",
         "Ask me what I’m selling, price range, and who it’s for.",
-        "Then generate a conversion-first landing: hooks, benefits, proof, offers, pricing, FAQ, and CTA.",
+        "Then generate a conversion-first site: hooks, benefits, proof, offers, shipping/returns trust cues, pricing, FAQ, and CTA.",
         "No fluff — make it feel ‘wow’ and trustworthy.",
       ].join("\n");
     }
@@ -970,14 +1076,17 @@ export default function BuildlioApp() {
       typeTag,
       "I want to build something.",
       "Ask me what it is and what outcome I want.",
-      "Then generate a premium site plan + full build with WOW-level writing and structure.",
+      "Then generate a premium plan + full build with strong writing and structure.",
     ].join("\n");
   }
 
-  // Export (kept from your working build; unchanged)
-  function exportHTML() {
-    if (!snapshot) return;
-    const currentPage = snapshot.pages?.find((p: any) => p.slug === activePageSlug) || snapshot.pages?.[0];
+  /* -----------------------------
+  ANCHOR:EXPORTS
+  -------------------------------- */
+  function exportWebsiteHTML() {
+    if (!snapshot || !isSiteSnapshot(snapshot)) return;
+
+    const currentPage = snapshot.pages?.find((p) => p.slug === activePageSlug) || snapshot.pages?.[0];
     if (!currentPage) return;
 
     const navItems = snapshot.navigation?.items || ["Home", "Features", "Pricing", "About", "Contact"];
@@ -1015,7 +1124,11 @@ ${(currentPage.blocks || [])
 <div class="max-w-5xl mx-auto px-6">
 <h1 class="text-7xl font-black tracking-[-2px] mb-6">${block.headline}</h1>
 <p class="text-2xl text-zinc-400 max-w-3xl mx-auto">${block.subhead}</p>
-${block.cta ? `<a href="#" class="mt-12 inline-block bg-white text-black px-12 py-4 rounded-3xl font-bold text-lg hover:scale-105 transition">${block.cta.label}</a>` : ""}
+${
+  block.cta
+    ? `<a href="#" class="mt-12 inline-block bg-white text-black px-12 py-4 rounded-3xl font-bold text-lg hover:scale-105 transition">${block.cta.label}</a>`
+    : ""
+}
 </div>
 </section>`;
     if (block.type === "features")
@@ -1091,7 +1204,9 @@ ${(block.plans || [])
 <span class="ml-2 text-zinc-500">${plan.interval}</span>
 </div>
 <ul class="mt-10 space-y-4">
-${(plan.features || []).map((f: string) => `<li class="flex items-center gap-3"><span class="text-emerald-500">✔</span> ${f}</li>`).join("")}
+${(plan.features || [])
+  .map((f: string) => `<li class="flex items-center gap-3"><span class="text-emerald-500">✔</span> ${f}</li>`)
+  .join("")}
 </ul>
 <a href="#" class="mt-12 block text-center py-4 bg-zinc-900 text-white rounded-2xl font-semibold">${plan.cta || "Get started"}</a>
 </div>`
@@ -1131,7 +1246,11 @@ ${block.title ? `<h2>${block.title}</h2>` : ""}
 <div class="max-w-3xl mx-auto px-6">
 <h2 class="text-5xl font-black tracking-tight">${block.headline}</h2>
 <p class="mt-6 text-xl">${block.subhead}</p>
-${block.buttonLabel ? `<a href="#" class="mt-10 inline-block bg-white text-black px-12 py-4 rounded-3xl font-bold text-lg">${block.buttonLabel}</a>` : ""}
+${
+  block.buttonLabel
+    ? `<a href="#" class="mt-10 inline-block bg-white text-black px-12 py-4 rounded-3xl font-bold text-lg">${block.buttonLabel}</a>`
+    : ""
+}
 </div>
 </section>`;
     return "";
@@ -1171,7 +1290,64 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
     URL.revokeObjectURL(url);
   }
 
-  // INTERNAL send (lets us auto-send without stuffing input)
+  function exportDocumentHTML() {
+    if (!snapshot || !isDocSnapshot(snapshot)) return;
+
+    const docs = snapshot.documents || [];
+    const active = docs.find((d) => d.id === activeDocId) || docs[0];
+    if (!active) return;
+
+    const title = active.title || "document";
+    const safeName = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 64) || "document";
+
+    const htmlContent = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${title}</title>
+<style>
+  body{font-family:ui-serif, Georgia, Cambria, "Times New Roman", Times, serif; color:#111; background:#f3f4f6; margin:0;}
+  .paper{max-width:900px;margin:40px auto;background:#fff;border:1px solid #e5e7eb;border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.12);overflow:hidden;}
+  .head{padding:28px 40px;background:#f9fafb;border-bottom:1px solid #e5e7eb;}
+  .head h1{margin:0;font-size:22px;line-height:1.2;}
+  .meta{margin-top:8px;font-size:12px;color:#4b5563;}
+  .body{padding:34px 40px;}
+  h1,h2,h3{font-family:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;}
+  h2{margin-top:26px}
+  p{line-height:1.6}
+</style>
+</head>
+<body>
+<div class="paper">
+  <div class="head">
+    <h1>${title}</h1>
+    <div class="meta">${active.jurisdiction ? `Jurisdiction: ${active.jurisdiction} • ` : ""}Category: ${active.category}</div>
+  </div>
+  <div class="body">
+    ${active.body_html || ""}
+  </div>
+</div>
+</body>
+</html>`;
+
+    const blob = new Blob([htmlContent], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${safeName}.html`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function exportCurrent() {
+    if (buildType === "document") exportDocumentHTML();
+    else exportWebsiteHTML();
+  }
+
+  /* -----------------------------
+  INTERNAL send
+  -------------------------------- */
   async function internalSend(text: string) {
     if (!text.trim() || isRunning) return;
 
@@ -1195,8 +1371,8 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
 
     try {
       await addLogWithDelay("Analyzing your request…", "info");
-      await addLogWithDelay("Planning structure, pages, and navigation…", "info");
-      await addLogWithDelay("Writing premium copy and sections…", "info");
+      await addLogWithDelay("Planning structure and output…", "info");
+      await addLogWithDelay(buildType === "document" ? "Drafting your document… " : "Writing premium copy and sections…", "info");
 
       let currentPid = projectId;
       if (!currentPid) {
@@ -1204,7 +1380,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
 
         const { data: proj, error: projError } = await supabase
           .from("projects")
-          .insert({ owner_id: user.id, name: "Professional Site", slug: `pro-${Date.now()}` })
+          .insert({ owner_id: user.id, name: "Professional Build", slug: `pro-${Date.now()}` })
           .select("id")
           .single();
 
@@ -1219,7 +1395,6 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
       const res = await fetch("/api/claude-test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        // buildType included (harmless even if your route ignores it)
         body: JSON.stringify({ projectId: currentPid, buildType, messages: newMessages }),
       });
 
@@ -1228,16 +1403,27 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
 
       const aiResponse = data.data;
 
-      await addLogWithDelay("Rendering sections…", "info");
+      await addLogWithDelay("Rendering output…", "info");
       await addLogWithDelay("Final polish…", "info");
 
       setMessages((prev) => [...prev, { role: "assistant", content: aiResponse.message }]);
 
       if (aiResponse.type === "build" && aiResponse.snapshot) {
-        setSnapshot(aiResponse.snapshot);
+        const nextSnap: AnySnapshot = aiResponse.snapshot;
+        setSnapshot(nextSnap);
+
+        // Reset selectors on new snapshots
+        if (isDocSnapshot(nextSnap)) {
+          const first = nextSnap.documents?.[0]?.id || "doc_1";
+          setActiveDocId(first);
+        } else if (isSiteSnapshot(nextSnap)) {
+          const firstPage = nextSnap.pages?.[0]?.slug || "index";
+          setActivePageSlug(firstPage);
+        }
+
         setCreditBalance((prev) => prev - 1);
         fetchHistory();
-        await addLogWithDelay("Done. Your full professional site is ready.", "success", 620);
+        await addLogWithDelay(buildType === "document" ? "Done. Your document draft is ready." : "Done. Your full professional site is ready.", "success", 620);
       }
     } catch (err: any) {
       const errMsg = `❌ ${err.message}`;
@@ -1275,14 +1461,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
         />
       )}
 
-      <TopNav
-        view={view}
-        setView={setView}
-        user={user}
-        creditBalance={creditBalance}
-        userEmail={user?.email}
-        onSignOut={() => supabase.auth.signOut()}
-      />
+      <TopNav view={view} setView={setView} user={user} creditBalance={creditBalance} userEmail={user?.email} onSignOut={() => supabase.auth.signOut()} />
 
       <main className="flex-1 flex overflow-hidden">
         {view === "landing" && (
@@ -1297,12 +1476,10 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                 Build.
                 <br />
                 <span className="bg-gradient-to-r from-cyan-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">
-                  Ship professional sites.
+                  Ship professional output.
                 </span>
               </h1>
-              <p className="text-2xl text-zinc-400 mb-12">
-                Complete websites with navbar, rich sections, testimonials, pricing, FAQ &amp; footer — instantly.
-              </p>
+              <p className="text-2xl text-zinc-400 mb-12">Websites, landing pages, stores, apps — and real documents — generated instantly.</p>
               <button
                 onClick={() => (user ? setView("builder") : setView("auth"))}
                 className="px-14 py-6 bg-white text-black rounded-3xl font-black text-2xl hover:scale-105 active:scale-95 transition"
@@ -1322,8 +1499,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                 <div className="mb-6 rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-sm text-zinc-300">
                   <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-400 mb-1">Selected</div>
                   <div className="font-semibold">
-                    {firstChoice} <span className="text-zinc-500">•</span>{" "}
-                    <span className="text-zinc-400">{buildType}</span>
+                    {firstChoice} <span className="text-zinc-500">•</span> <span className="text-zinc-400">{buildType}</span>
                   </div>
                 </div>
               )}
@@ -1342,10 +1518,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
               />
-              <button
-                onClick={handleAuth}
-                className="w-full py-5 bg-white text-black font-bold rounded-2xl hover:bg-zinc-100 transition"
-              >
+              <button onClick={handleAuth} className="w-full py-5 bg-white text-black font-bold rounded-2xl hover:bg-zinc-100 transition">
                 Sign in
               </button>
             </div>
@@ -1380,9 +1553,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                           }`}
                         >
                           {msg.role === "assistant" && (
-                            <div className="uppercase text-[10px] tracking-[2px] text-cyan-400 mb-2 font-mono">
-                              BUILDLIO
-                            </div>
+                            <div className="uppercase text-[10px] tracking-[2px] text-cyan-400 mb-2 font-mono">BUILDLIO</div>
                           )}
                           {msg.content}
                         </div>
@@ -1396,7 +1567,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                             <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce delay-150" />
                             <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce delay-300" />
                           </div>
-                          Building your site…
+                          {buildType === "document" ? "Drafting your document…" : "Building your site…"}
                         </div>
                       </div>
                     )}
@@ -1410,7 +1581,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                         value={chatInput}
                         onChange={(e) => setChatInput(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && !isRunning && sendMessage()}
-                        placeholder="Tell me what you want to build…"
+                        placeholder={buildType === "document" ? "Tell me what document you need…" : "Tell me what you want to build…"}
                         className="w-full bg-zinc-950 border border-white/10 focus:border-cyan-500 rounded-3xl pl-7 pr-16 py-5 text-sm outline-none"
                         disabled={isRunning}
                       />
@@ -1424,13 +1595,12 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                       </button>
                     </div>
                     <p className="text-center text-[10px] text-zinc-500 mt-4">
-                      Buildlio will generate a complete site when ready
+                      {buildType === "document" ? "Buildlio will generate a document draft when ready" : "Buildlio will generate a complete site when ready"}
                     </p>
                   </div>
                 </>
               )}
 
-              {/* WHITE build console */}
               {activeTab === "console" && (
                 <div className="flex-1 overflow-y-auto p-6 font-mono text-xs bg-white text-zinc-800 space-y-3">
                   <div className="sticky top-0 bg-white pb-4 z-10">
@@ -1448,11 +1618,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                         <span className="text-zinc-500 shrink-0">buildlio&gt;</span>
                         <span
                           className={
-                            log.type === "success"
-                              ? "text-emerald-700"
-                              : log.type === "error"
-                              ? "text-red-600"
-                              : "text-zinc-800"
+                            log.type === "success" ? "text-emerald-700" : log.type === "error" ? "text-red-600" : "text-zinc-800"
                           }
                         >
                           {log.message}
@@ -1467,7 +1633,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                 <div className="flex-1 overflow-y-auto p-6">
                   <div className="text-xs uppercase tracking-widest text-zinc-500 mb-6">Version History</div>
                   {history.length === 0 ? (
-                    <p className="text-zinc-500">No versions yet. Build your first site!</p>
+                    <p className="text-zinc-500">No versions yet. Build your first one!</p>
                   ) : (
                     history.map((v, i) => (
                       <div key={i} className="mb-4 bg-zinc-900 rounded-3xl p-5 text-sm">
@@ -1484,29 +1650,45 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
             </aside>
 
             <div className="flex-1 flex flex-col">
+              {/* Top bar: Website pages OR Document export */}
               <div className="h-14 border-b border-white/10 bg-zinc-900 flex items-center px-6 gap-2 overflow-x-auto">
-                {snapshot?.pages?.map((p: any) => (
-                  <button
-                    key={p.slug}
-                    onClick={() => setActivePageSlug(p.slug)}
-                    className={`px-6 py-2 text-sm rounded-2xl transition whitespace-nowrap ${
-                      activePageSlug === p.slug ? "bg-white text-black font-semibold" : "hover:bg-white/10"
-                    }`}
-                  >
-                    {p.title || (p.slug === "index" ? "Home" : p.slug.charAt(0).toUpperCase() + p.slug.slice(1))}
-                  </button>
-                ))}
+                {buildType !== "document" && isSiteSnapshot(snapshot) && (
+                  <>
+                    {snapshot.pages.map((p) => (
+                      <button
+                        key={p.slug}
+                        onClick={() => setActivePageSlug(p.slug)}
+                        className={`px-6 py-2 text-sm rounded-2xl transition whitespace-nowrap ${
+                          activePageSlug === p.slug ? "bg-white text-black font-semibold" : "hover:bg-white/10"
+                        }`}
+                      >
+                        {p.title || (p.slug === "index" ? "Home" : p.slug.charAt(0).toUpperCase() + p.slug.slice(1))}
+                      </button>
+                    ))}
+                  </>
+                )}
+
                 <div className="flex-1" />
+
                 <button
-                  onClick={exportHTML}
+                  onClick={exportCurrent}
                   disabled={!snapshot}
                   className="flex items-center gap-2 px-7 py-2.5 bg-white/5 hover:bg-white/10 rounded-2xl text-sm font-medium disabled:opacity-40 transition"
                 >
-                  Export Full HTML
+                  {buildType === "document" ? "Export Document" : "Export Full HTML"}
                 </button>
               </div>
 
-              <SitePreview snapshot={snapshot} activePageSlug={activePageSlug} />
+              {/* Renderer switch */}
+              {buildType === "document" ? (
+                <DocumentPreview
+                  snapshot={isDocSnapshot(snapshot) ? snapshot : null}
+                  activeDocId={activeDocId}
+                  onSelectDoc={(id) => setActiveDocId(id)}
+                />
+              ) : (
+                <SitePreview snapshot={isSiteSnapshot(snapshot) ? snapshot : null} activePageSlug={activePageSlug} />
+              )}
             </div>
           </div>
         )}
