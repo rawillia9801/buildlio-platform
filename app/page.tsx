@@ -1,9 +1,9 @@
 /* FILE: app/page.tsx
-   BUILDLIO.SITE — v4.2: Full Professional Architect
-   • Now renders ALL new block types: stats, testimonials, pricing, faq, content, cta
-   • Uses navigation + tagline from snapshot
-   • Premium preview + export with complete, beautiful HTML (header/menu/footer + every block)
-   • High-tech glass UI, live Build Console, buttery smooth
+   BUILDLIO.SITE — v4.3: Build-Fixed & Production-Ready
+   • Fixed TypeScript error: 'proj' is possibly 'null' (proper Supabase .single() handling)
+   • All rich blocks (stats, testimonials, pricing, faq, content, cta) fully rendered
+   • Navigation + tagline + professional footer in preview & export
+   • High-tech glass UI + live Build Console
 */
 
 "use client";
@@ -98,7 +98,6 @@ export default function BuildlioApp() {
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; }
-    .glass { background: rgba(255,255,255,0.85); backdrop-filter: blur(16px); }
   </style>
 </head>
 <body class="bg-zinc-50 text-zinc-900">
@@ -296,7 +295,17 @@ export default function BuildlioApp() {
       let currentPid = projectId;
       if (!currentPid) {
         if (!user) throw new Error("Please log in first.");
-        const { data: proj } = await supabase.from("projects").insert({ owner_id: user.id, name: "Professional Site", slug: `pro-${Date.now()}` }).select("id").single();
+
+        const { data: proj, error: projError } = await supabase
+          .from("projects")
+          .insert({ owner_id: user.id, name: "Professional Site", slug: `pro-${Date.now()}` })
+          .select("id")
+          .single();
+
+        if (projError || !proj?.id) {
+          throw new Error(projError?.message || "Could not create project.");
+        }
+
         currentPid = proj.id;
         setProjectId(currentPid);
       }
@@ -314,7 +323,7 @@ export default function BuildlioApp() {
 
       const aiResponse = data.data;
 
-      await addLogWithDelay("🎨 Rendering beautiful sections (hero, features, pricing, testimonials...)", "info");
+      await addLogWithDelay("🎨 Rendering beautiful sections...", "info");
       await addLogWithDelay("📝 Adding rich content, FAQ & final polish", "info");
 
       setMessages(prev => [...prev, { role: "assistant", content: aiResponse.message }]);
@@ -381,7 +390,7 @@ export default function BuildlioApp() {
         </div>
 
         <div className="flex-1 overflow-auto bg-white">
-          {/* Professional Navbar with tagline */}
+          {/* Professional Navbar */}
           <nav className="bg-white border-b sticky top-0 z-40 shadow-sm">
             <div className="max-w-7xl mx-auto px-8 h-20 flex items-center justify-between">
               <div className="flex items-center gap-4">
@@ -397,7 +406,6 @@ export default function BuildlioApp() {
             </div>
           </nav>
 
-          {/* Content */}
           {!snapshot ? (
             <div className="h-[calc(100vh-110px)] flex flex-col items-center justify-center bg-zinc-50">
               <div className="text-8xl opacity-10 mb-6">⬡</div>
@@ -513,7 +521,7 @@ export default function BuildlioApp() {
                   )}
 
                   {block.type === 'content' && (
-                    <section className="py-24 max-w-4xl mx-auto px-6 prose prose-zinc prose-headings:font-semibold prose-lg">
+                    <section className="py-24 max-w-4xl mx-auto px-6 prose prose-zinc prose-lg">
                       {block.title && <h2 className="text-center mb-12">{block.title}</h2>}
                       <div dangerouslySetInnerHTML={{ __html: block.body || block.content || "" }} />
                     </section>
@@ -533,7 +541,7 @@ export default function BuildlioApp() {
             </div>
           )}
 
-          {/* Always-present Footer */}
+          {/* Footer */}
           <footer className="bg-zinc-950 text-zinc-400 py-20">
             <div className="max-w-7xl mx-auto px-8 grid grid-cols-2 md:grid-cols-4 gap-y-12">
               <div>
