@@ -1,10 +1,18 @@
 /* FILE: app/page.tsx
-   BUILDLIO.SITE — v4.6: “SPLOOSH” White Splash + Choice Select + Focus Fix
-   - ADD: Solid white splash with water-ripple vibe + interactive choices
-   - ADD: Click choice -> button sinks + expanding “sploosh” ripple -> app loads
-   - ADD: Auto-seed first chat prompt based on choice
-   - FIX: Chat input “1 letter at a time” (focus stability)
-   - KEEP: Existing builder UI, export, logs, version history, preview
+   BUILDLIO.SITE — v4.8: White-First Corner Ripple + Typewriter Intro + Float-Up Choices + SPLOOSH Sink (Full File)
+
+   CHANGELOG
+   - v4.8
+     * Splash starts as SOLID WHITE (nothing visible)
+     * Corner “under-the-surface” ripple appears first
+     * Intro text types across screen (no extra on-screen commentary)
+     * Options float up only after typing completes
+     * Click option -> selected card “sinks” + expanding ripple -> app transitions
+     * Chat input focus stability (fixes “1 letter at a time” symptom)
+     * Keeps: Builder UI, preview, export, logs, history
+
+   ANCHOR:CONFIG
+   - Requires NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY
 */
 
 "use client";
@@ -21,80 +29,136 @@ type LogEntry = { timestamp: string; message: string; type: "info" | "success" |
 type Tab = "chat" | "console" | "history";
 type UserLite = { email?: string; id?: string } | null;
 
-type BuildChoice =
-  | "Website"
-  | "Application"
-  | "Documents"
-  | "Store"
-  | "Landing Page"
-  | "Other";
+type BuildChoice = "Website" | "Application" | "Documents" | "Store" | "Landing Page" | "Other";
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-/* -----------------------------
-   White SPLOOSH Splash
--------------------------------- */
-function SplashSploosh({
+/* ------------------------------------------------
+   ANCHOR:SPLASH — Pure White -> Corner Ripple -> Typewriter -> Float-Up Choices -> SPLOOSH Sink
+--------------------------------------------------- */
+function BuildlioSplash({
   onSelect,
 }: {
   onSelect: (choice: BuildChoice) => void;
 }) {
   const choices: Array<{ label: BuildChoice; desc: string }> = [
-    { label: "Website", desc: "A full marketing site with pages & sections" },
-    { label: "Application", desc: "A web app UI + flows + dashboard layout" },
-    { label: "Documents", desc: "Policies, contracts, proposals, packets" },
-    { label: "Store", desc: "Product landing + checkout-ready structure" },
-    { label: "Landing Page", desc: "One high-converting page for ads/SEO" },
-    { label: "Other", desc: "Tell Buildlio what you have in mind" },
+    { label: "Website", desc: "A complete professional site with sections & pages" },
+    { label: "Application", desc: "A product-style build with UX flow & structure" },
+    { label: "Documents", desc: "Contracts, policies, packets, proposals" },
+    { label: "Store", desc: "A product-led landing experience built to convert" },
+    { label: "Landing Page", desc: "One high-converting page for an offer" },
+    { label: "Other", desc: "Describe what you want to build" },
   ];
 
-  const [sploosh, setSploosh] = useState<{
-    x: number;
-    y: number;
-    active: boolean;
-  }>({ x: 50, y: 50, active: false });
+  // 0 = pure white
+  // 1 = corner ripple begins (still white)
+  // 2 = typing
+  // 3 = choices float up
+  // 4 = exiting (click sploosh)
+  const [phase, setPhase] = useState<0 | 1 | 2 | 3 | 4>(0);
 
-  const [selected, setSelected] = useState<BuildChoice | null>(null);
+  const intro =
+    "Hi! I’m Buildlio — your AI Chat Website Builder. Let’s turn your dream into a reality! What are we creating today?";
+
+  const [typed, setTyped] = useState("");
+  const [cornerRippleOn, setCornerRippleOn] = useState(false);
+
   const [isExiting, setIsExiting] = useState(false);
   const [sinkKey, setSinkKey] = useState<string | null>(null);
 
+  // Corner origin (looks like “something under the screen”)
+  const origin = useMemo(() => ({ x: 92, y: 12 }), []);
   const rootRef = useRef<HTMLDivElement>(null);
 
-  const startSploosh = async (choice: BuildChoice, ev: React.MouseEvent<HTMLButtonElement>) => {
+  // Click ripple
+  const [sploosh, setSploosh] = useState<{ x: number; y: number; active: boolean }>({
+    x: origin.x,
+    y: origin.y,
+    active: false,
+  });
+
+  useEffect(() => {
+    let alive = true;
+
+    (async () => {
+      // Pure white first
+      await new Promise((r) => setTimeout(r, 450));
+      if (!alive) return;
+
+      // Corner ripple appears
+      setPhase(1);
+      setCornerRippleOn(true);
+
+      await new Promise((r) => setTimeout(r, 520));
+      if (!alive) return;
+
+      // Start typing
+      setPhase(2);
+
+      // Typewriter
+      const speedMs = 18;
+      for (let i = 1; i <= intro.length; i++) {
+        if (!alive) return;
+        setTyped(intro.slice(0, i));
+        await new Promise((r) => setTimeout(r, speedMs));
+      }
+
+      await new Promise((r) => setTimeout(r, 180));
+      if (!alive) return;
+
+      // Choices float up
+      setPhase(3);
+    })();
+
+    return () => {
+      alive = false;
+    };
+  }, [intro]);
+
+  const handleChoiceClick = async (choice: BuildChoice, ev: React.MouseEvent<HTMLButtonElement>) => {
     if (isExiting) return;
 
-    setSelected(choice);
-
-    // Find click point relative to splash container
+    // Click point relative to container for ripple origin
     const rect = rootRef.current?.getBoundingClientRect();
-    const cx = rect ? ((ev.clientX - rect.left) / rect.width) * 100 : 50;
-    const cy = rect ? ((ev.clientY - rect.top) / rect.height) * 100 : 45;
+    const cx = rect ? ((ev.clientX - rect.left) / rect.width) * 100 : origin.x;
+    const cy = rect ? ((ev.clientY - rect.top) / rect.height) * 100 : origin.y;
 
-    setSinkKey(choice); // sink animation for clicked button
-    setSploosh({ x: clamp(cx, 5, 95), y: clamp(cy, 5, 95), active: true });
+    setSinkKey(choice);
+    setSploosh({ x: clamp(cx, 6, 94), y: clamp(cy, 6, 94), active: true });
 
-    // let animation play
+    setPhase(4);
     setIsExiting(true);
-    await new Promise((r) => setTimeout(r, 620));
+
+    await new Promise((r) => setTimeout(r, 640));
     onSelect(choice);
   };
 
   return (
     <div
       ref={rootRef}
-      className={`fixed inset-0 z-[9999] bg-white text-zinc-900 overflow-hidden`}
+      className="fixed inset-0 z-[9999] bg-white text-zinc-900 overflow-hidden"
       style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
     >
-      {/* Ambient “water surface” rings */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="sploosh-ambient sploosh-ambient-a" />
-        <div className="sploosh-ambient sploosh-ambient-b" />
-        <div className="sploosh-ambient sploosh-ambient-c" />
-      </div>
+      {/* Corner ripple (phase 1+) */}
+      {cornerRippleOn && (
+        <div
+          className="absolute inset-0 pointer-events-none"
+          style={
+            {
+              ["--cx" as any]: `${origin.x}%`,
+              ["--cy" as any]: `${origin.y}%`,
+            } as React.CSSProperties
+          }
+        >
+          <div className="corner-ripple corner-ripple-1" />
+          <div className="corner-ripple corner-ripple-2" />
+          <div className="corner-ripple corner-ripple-3" />
+        </div>
+      )}
 
-      {/* Click SPLOOSH ripple */}
+      {/* Click sploosh ripple (phase 4) */}
       {sploosh.active && (
         <div
           className="absolute inset-0 pointer-events-none"
@@ -112,167 +176,202 @@ function SplashSploosh({
         </div>
       )}
 
-      {/* Content */}
+      {/* Typed text + choices */}
       <div className="relative h-full w-full flex items-center justify-center px-6">
         <div className="w-full max-w-5xl">
-          <div className="flex items-center justify-between gap-6 mb-10">
-            <div className="flex items-center gap-4">
-              <div className="w-12 h-12 rounded-3xl bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center text-white font-black text-xl shadow-sm">
-                ⬡
-              </div>
-              <div>
-                <div className="text-sm font-semibold tracking-[0.2em] uppercase text-zinc-500">
-                  buildlio.site
+          {/* Typed line */}
+          <div className="min-h-[140px]">
+            {(phase >= 2) && (
+              <div className="text-zinc-900">
+                <div className="text-4xl md:text-5xl font-black tracking-[-0.045em] leading-[1.08]">
+                  {typed}
+                  <span className={`caret ${phase < 3 ? "caret-on" : "caret-off"}`} />
                 </div>
-                <div className="text-xs text-zinc-400">AI Chat Website Builder</div>
               </div>
-            </div>
-
-            <div className="hidden md:flex items-center gap-2 text-xs text-zinc-400">
-              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500" />
-              Ready
-            </div>
+            )}
           </div>
 
-          <div className="grid md:grid-cols-2 gap-10 items-start">
-            {/* Left: message */}
-            <div>
-              <h1 className="text-4xl md:text-5xl font-black tracking-[-0.04em] leading-[1.05]">
-                Hi! I’m Buildlio — your AI Chat Website Builder.
-              </h1>
-              <p className="mt-5 text-xl md:text-2xl text-zinc-700 leading-relaxed">
-                Let’s turn your dream into a reality.
-                <span className="block mt-2 text-zinc-600">
-                  What are we creating today?
-                </span>
-              </p>
-
-              <div className="mt-8 flex items-center gap-3 text-sm text-zinc-500">
-                <div className="w-2.5 h-2.5 rounded-full bg-cyan-500" />
-                <span>Choose one — then watch it go SPLOOSH.</span>
-              </div>
-
-              <div className="mt-10 p-5 rounded-3xl border border-zinc-200 bg-zinc-50">
-                <div className="text-xs font-semibold tracking-[0.2em] uppercase text-zinc-500">
-                  Tip
-                </div>
-                <div className="mt-2 text-sm text-zinc-600">
-                  After you choose, just describe your business in one sentence. Buildlio will generate a complete, polished build.
-                </div>
-              </div>
-            </div>
-
-            {/* Right: choices */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              {choices.map((c) => {
+          {/* Choices float up */}
+          {phase >= 3 && (
+            <div className={`mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 ${isExiting ? "choices-exiting" : "choices-enter"}`}>
+              {choices.map((c, idx) => {
                 const sinking = sinkKey === c.label && isExiting;
-                const disabled = isExiting;
-
                 return (
                   <button
                     key={c.label}
-                    onClick={(ev) => startSploosh(c.label, ev)}
-                    disabled={disabled}
+                    onClick={(ev) => handleChoiceClick(c.label, ev)}
+                    disabled={isExiting}
                     className={[
-                      "relative text-left p-6 rounded-3xl border border-zinc-200 bg-white",
-                      "transition-all duration-300",
-                      "hover:shadow-lg hover:-translate-y-0.5",
-                      "active:translate-y-0",
-                      disabled ? "opacity-80 cursor-not-allowed" : "",
-                      sinking ? "sploosh-sink" : "",
+                      "choice-card",
+                      `delay-${idx}`,
+                      sinking ? "choice-sink" : "",
+                      isExiting && !sinking ? "choice-fade" : "",
                     ].join(" ")}
                   >
-                    {/* “waterline” gloss */}
-                    <div className="pointer-events-none absolute inset-0 rounded-3xl overflow-hidden">
-                      <div className="absolute inset-x-0 -top-10 h-24 bg-gradient-to-b from-white via-white/60 to-transparent" />
-                      <div className="absolute -inset-24 opacity-[0.06] bg-[radial-gradient(#000_1px,transparent_1px)] [background-size:22px_22px]" />
-                    </div>
-
-                    <div className="relative">
-                      <div className="flex items-center justify-between gap-4">
-                        <div className="text-lg font-extrabold tracking-[-0.02em]">{c.label}</div>
-                        <div className="w-9 h-9 rounded-2xl bg-zinc-100 flex items-center justify-center text-zinc-700 font-black">
-                          →
-                        </div>
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="text-lg font-extrabold tracking-[-0.02em]">{c.label}</div>
+                      <div className="w-10 h-10 rounded-2xl bg-zinc-100 flex items-center justify-center text-zinc-700 font-black">
+                        →
                       </div>
-                      <div className="mt-2 text-sm text-zinc-600 leading-relaxed">
-                        {c.desc}
-                      </div>
-
-                      {/* “sink” ripple lines on the card */}
-                      <div className="pointer-events-none absolute left-6 right-6 bottom-5 h-10 opacity-0 sploosh-card-lines" />
                     </div>
+                    <div className="mt-2 text-sm text-zinc-600 leading-relaxed">{c.desc}</div>
+                    <div className="card-ripples pointer-events-none" />
                   </button>
                 );
               })}
             </div>
-          </div>
-
-          <div className="mt-12 text-xs text-zinc-400">
-            By continuing, you agree to Buildlio’s Terms & Privacy.
-          </div>
+          )}
         </div>
       </div>
 
-      {/* CSS (scoped via global style tag) */}
       <style jsx>{`
-        .sploosh-ambient {
-          position: absolute;
-          inset: -40%;
-          border-radius: 999px;
-          border: 2px solid rgba(0, 0, 0, 0.05);
-          transform: scale(0.7);
-          opacity: 0.4;
-          filter: blur(0.2px);
-          animation: ambient 6.8s ease-in-out infinite;
+        .caret {
+          display: inline-block;
+          width: 10px;
+          margin-left: 6px;
+          border-bottom: 4px solid transparent;
         }
-        .sploosh-ambient-a {
-          top: 10%;
-          left: -5%;
-          animation-delay: 0s;
+        .caret-on {
+          height: 0.95em;
+          border-right: 3px solid rgba(0, 0, 0, 0.55);
+          animation: blink 0.9s step-end infinite;
         }
-        .sploosh-ambient-b {
-          top: -10%;
-          left: 15%;
-          animation-duration: 8.2s;
-          opacity: 0.32;
-          animation-delay: 0.6s;
+        .caret-off {
+          border-right: 3px solid transparent;
         }
-        .sploosh-ambient-c {
-          top: 18%;
-          left: 28%;
-          animation-duration: 9.6s;
-          opacity: 0.26;
-          animation-delay: 1.2s;
-        }
-        @keyframes ambient {
-          0% { transform: scale(0.68); opacity: 0.12; }
-          50% { transform: scale(0.78); opacity: 0.22; }
-          100% { transform: scale(0.68); opacity: 0.12; }
+        @keyframes blink {
+          0% { opacity: 1; }
+          50% { opacity: 0; }
+          100% { opacity: 1; }
         }
 
+        /* Corner ripple: subtle rings from corner like something under the surface */
+        .corner-ripple {
+          position: absolute;
+          left: var(--cx);
+          top: var(--cy);
+          transform: translate(-50%, -50%);
+          border-radius: 999px;
+          border: 2px solid rgba(0, 0, 0, 0.08);
+          opacity: 0;
+          width: 24px;
+          height: 24px;
+          animation: corner 1.35s ease-out infinite;
+          filter: blur(0.1px);
+        }
+        .corner-ripple-2 { animation-delay: 0.22s; border-color: rgba(0,0,0,0.06); }
+        .corner-ripple-3 { animation-delay: 0.44s; border-color: rgba(0,0,0,0.045); }
+
+        @keyframes corner {
+          0% { transform: translate(-50%, -50%) scale(0.35); opacity: 0; }
+          18% { opacity: 0.55; }
+          100% { transform: translate(-50%, -50%) scale(9.5); opacity: 0; }
+        }
+
+        /* Choices entrance */
+        .choices-enter .choice-card {
+          opacity: 0;
+          transform: translateY(18px);
+          animation: floatUp 520ms cubic-bezier(0.2, 0.9, 0.2, 1) forwards;
+        }
+        @keyframes floatUp {
+          to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* Stagger */
+        .delay-0 { animation-delay: 0ms; }
+        .delay-1 { animation-delay: 60ms; }
+        .delay-2 { animation-delay: 120ms; }
+        .delay-3 { animation-delay: 180ms; }
+        .delay-4 { animation-delay: 240ms; }
+        .delay-5 { animation-delay: 300ms; }
+
+        .choice-card {
+          position: relative;
+          text-align: left;
+          padding: 22px;
+          border-radius: 28px;
+          border: 1px solid rgba(0,0,0,0.12);
+          background: #fff;
+          transition: transform 220ms ease, box-shadow 220ms ease, opacity 220ms ease;
+          box-shadow: 0 10px 24px rgba(0,0,0,0.06);
+        }
+        .choice-card:hover {
+          transform: translateY(-2px);
+          box-shadow: 0 14px 34px rgba(0,0,0,0.085);
+        }
+        .choice-card:active {
+          transform: translateY(1px);
+        }
+
+        /* Sink effect */
+        .choice-sink {
+          transform: translateY(10px) scale(0.985) !important;
+          box-shadow: 0 6px 18px rgba(0,0,0,0.05) !important;
+        }
+        .choice-sink::after {
+          content: "";
+          position: absolute;
+          inset: -2px;
+          border-radius: 30px;
+          border: 2px solid rgba(0,0,0,0.10);
+          opacity: 0;
+          animation: sinkOutline 520ms ease-out forwards;
+          pointer-events: none;
+        }
+        @keyframes sinkOutline {
+          0% { opacity: 0; transform: scale(1); }
+          15% { opacity: 0.55; }
+          100% { opacity: 0; transform: scale(1.10); }
+        }
+
+        .card-ripples {
+          position: absolute;
+          left: 22px;
+          right: 22px;
+          bottom: 14px;
+          height: 44px;
+          opacity: 0;
+        }
+        .choice-sink .card-ripples {
+          opacity: 1;
+          background:
+            radial-gradient(circle at 50% 65%, rgba(0,0,0,0.11), rgba(255,255,255,0) 58%),
+            radial-gradient(circle at 50% 65%, rgba(0,0,0,0.08), rgba(255,255,255,0) 62%);
+          animation: cardRipple 520ms ease-out forwards;
+        }
+        @keyframes cardRipple {
+          0% { transform: translateY(0) scale(0.88); opacity: 0.22; }
+          35% { opacity: 0.34; }
+          100% { transform: translateY(7px) scale(1.24); opacity: 0; }
+        }
+
+        .choice-fade {
+          opacity: 0.35 !important;
+          transform: translateY(8px) scale(0.99) !important;
+        }
+
+        /* Click sploosh ripple across the page */
         .sploosh-ring {
           position: absolute;
           left: var(--sx);
           top: var(--sy);
-          width: 14px;
-          height: 14px;
+          width: 12px;
+          height: 12px;
           transform: translate(-50%, -50%) scale(0.2);
           border-radius: 999px;
           border: 2px solid rgba(0, 0, 0, 0.11);
           opacity: 0.0;
-          animation: ring 620ms ease-out forwards;
+          animation: ring 640ms ease-out forwards;
           filter: blur(0.1px);
         }
         .sploosh-ring-2 { animation-delay: 90ms; border-color: rgba(0,0,0,0.085); }
         .sploosh-ring-3 { animation-delay: 160ms; border-color: rgba(0,0,0,0.06); }
-
         @keyframes ring {
           0% { transform: translate(-50%, -50%) scale(0.2); opacity: 0.0; }
           12% { opacity: 0.55; }
-          100% { transform: translate(-50%, -50%) scale(80); opacity: 0.0; }
+          100% { transform: translate(-50%, -50%) scale(78); opacity: 0.0; }
         }
-
         .sploosh-wash {
           position: absolute;
           inset: 0;
@@ -280,52 +379,18 @@ function SplashSploosh({
             rgba(0,0,0,0.06),
             rgba(0,0,0,0.02) 18%,
             rgba(255,255,255,0) 48%);
-          animation: wash 620ms ease-out forwards;
+          animation: wash 640ms ease-out forwards;
           opacity: 0;
         }
         @keyframes wash {
           0% { opacity: 0; }
-          20% { opacity: 1; }
+          18% { opacity: 1; }
           100% { opacity: 0; }
-        }
-
-        .sploosh-sink {
-          transform: translateY(8px) scale(0.985) !important;
-          filter: saturate(0.98);
-        }
-        .sploosh-sink::after {
-          content: "";
-          position: absolute;
-          inset: -2px;
-          border-radius: 28px;
-          border: 2px solid rgba(0,0,0,0.08);
-          opacity: 0;
-          animation: sinkOutline 540ms ease-out forwards;
-          pointer-events: none;
-        }
-        @keyframes sinkOutline {
-          0% { opacity: 0.0; transform: scale(1); }
-          15% { opacity: 0.55; }
-          100% { opacity: 0.0; transform: scale(1.08); }
-        }
-
-        .sploosh-sink .sploosh-card-lines {
-          opacity: 1;
-          background:
-            radial-gradient(circle at 50% 55%, rgba(0,0,0,0.11), rgba(255,255,255,0) 58%),
-            radial-gradient(circle at 50% 55%, rgba(0,0,0,0.08), rgba(255,255,255,0) 62%);
-          animation: cardRipple 520ms ease-out forwards;
-        }
-        @keyframes cardRipple {
-          0% { transform: translateY(0) scale(0.85); opacity: 0.2; }
-          35% { opacity: 0.35; }
-          100% { transform: translateY(6px) scale(1.2); opacity: 0; }
         }
       `}</style>
     </div>
   );
 }
-
 /* -----------------------------
    Top Navigation
 -------------------------------- */
