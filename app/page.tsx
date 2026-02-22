@@ -1,27 +1,13 @@
 /* FILE: app/page.tsx
-   BUILDLIO.SITE — v5.1: Premium Glass UI + Fixed Chat Input + Auto-Grow Prompt
-   CHANGELOG
-   - v5.1 (2026-02-21)
-     * FIX: Chat input now fully supports continuous typing (stable auto-growing textarea + isolated ChatPanel component)
-     * ENH: Major premium glassmorphism refresh — deeper blurs, glowing focus rings, micro-animations, refined shadows
-     * ENH: Chat UI upgraded with avatars, modern bubbles, smooth typing indicator
-     * ENH: Auto-growing prompt box (Shift+Enter for new line, Enter to send) + modern send icon
-     * ENH: Pricing cards with annual savings badges + lift hover effects
-     * ENH: Console logs now have colored icons + better spacing
-     * ENH: Improved landing hero, sidebar polish, preview frame, and overall responsiveness
-     * FIX: Stale credit balance update in sendMessage
-     * KEEP: All v5.0 features (Tiers, Credits, Restore, Export, etc.)
-   ANCHOR INDEX
-   - ANCHOR:TIER_CONFIG
-   - ANCHOR:SUPABASE_PROFILE
-   - ANCHOR:PRICING_VIEW
-   - ANCHOR:AUTH_VIEW
-   - ANCHOR:BUILDER_VIEW
-   - ANCHOR:EXPORT
+   BUILDLIO.SITE — v4.4: Typing Focus Fix (No More 1-Letter Bug)
+   - FIX: Input focus no longer drops after 1 character
+   - FIX: TopNav moved outside component (prevents re-creation each render)
+   - ADD: Chat input focus-lock only when Chat tab is active
+   - KEPT: Your existing UI, preview, export, logs, history, Supabase auth, Claude build flow
 */
-"use client";
 
-import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
+"use client";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Inter, Fira_Code } from "next/font/google";
 import { createBrowserClient } from "@supabase/ssr";
 
@@ -32,163 +18,89 @@ type ViewState = "landing" | "auth" | "builder" | "pricing";
 type Message = { role: "user" | "assistant"; content: string };
 type LogEntry = { timestamp: string; message: string; type: "info" | "success" | "error" };
 type Tab = "chat" | "console" | "history";
-type Billing = "monthly" | "annual";
-type PlanKey = "free" | "starter" | "pro" | "agency";
 
-type ProfileRow = {
-  id: string;
-  email: string | null;
-  plan: PlanKey | null;
-  credits_balance: number | null;
-  credits_reset_at: string | null;
-};
+type UserLite = { email?: string; id?: string } | null;
 
-type VersionRow = {
-  id: string;
-  project_id: string;
-  version_no: number;
-  snapshot: any;
-  created_at: string;
-};
+function TopNav({
+  view,
+  setView,
+  user,
+  creditBalance,
+  userEmail,
+  onSignOut,
+}: {
+  view: ViewState;
+  setView: (v: ViewState) => void;
+  user: UserLite;
+  creditBalance: number;
+  userEmail?: string;
+  onSignOut: () => void;
+}) {
+  return (
+    <nav className="h-14 shrink-0 bg-zinc-950/90 backdrop-blur-2xl border-b border-white/10 flex items-center justify-between px-6 z-50">
+      <div className="flex items-center gap-3">
+        <div className="w-7 h-7 bg-gradient-to-br from-cyan-400 to-violet-500 rounded-2xl flex items-center justify-center text-sm font-black text-black">
+          ⬡
+        </div>
+        <span className="font-black text-2xl tracking-[-1px] text-white">buildlio</span>
+        <span className="text-cyan-400 text-sm font-mono -ml-1">.site</span>
+      </div>
 
-// ======================== STABLE SUB-COMPONENTS ========================
+      <div className="flex items-center gap-7 text-sm font-medium">
+        <button
+          onClick={() => setView("builder")}
+          className={`transition-colors ${view === "builder" ? "text-white" : "text-zinc-400 hover:text-white"}`}
+        >
+          Builder
+        </button>
+        <button
+          onClick={() => setView("pricing")}
+          className={`transition-colors ${view === "pricing" ? "text-white" : "text-zinc-400 hover:text-white"}`}
+        >
+          Pricing
+        </button>
+      </div>
 
-interface ChatPanelProps {
-  messages: Message[];
-  chatInput: string;
-  setChatInput: (value: string) => void;
-  isRunning: boolean;
-  sendMessage: () => void;
-  messagesEndRef: React.RefObject<HTMLDivElement>;
+      <div className="flex items-center gap-4">
+        {user ? (
+          <>
+            <div className="px-4 py-1 rounded-full bg-gradient-to-r from-cyan-500/10 to-violet-500/10 border border-cyan-500/20 text-cyan-400 text-xs font-mono tracking-widest">
+              {creditBalance} CR
+            </div>
+            <span className="text-xs text-zinc-500 hidden md:block">{userEmail}</span>
+            <button onClick={onSignOut} className="text-xs text-zinc-400 hover:text-white transition">
+              Sign out
+            </button>
+          </>
+        ) : (
+          <button onClick={() => setView("auth")} className="font-medium text-sm text-zinc-300 hover:text-white">
+            Log in
+          </button>
+        )}
+      </div>
+    </nav>
+  );
 }
-
-const ChatPanel = React.memo(
-  ({ messages, chatInput, setChatInput, isRunning, sendMessage, messagesEndRef }: ChatPanelProps) => {
-    const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-    const handleInput = useCallback((e: React.FormEvent<HTMLTextAreaElement>) => {
-      const target = e.currentTarget;
-      target.style.height = "auto";
-      target.style.height = `${target.scrollHeight}px`;
-    }, []);
-
-    return (
-      <>
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-7 bg-zinc-950/80">
-          {messages.map((msg, i) => (
-            <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"} group`}>
-              {msg.role === "assistant" && (
-                <div className="w-8 h-8 flex-shrink-0 mt-1 mr-3 bg-gradient-to-br from-cyan-400 to-violet-500 rounded-2xl flex items-center justify-center text-black font-black text-lg">
-                  ⬡
-                </div>
-              )}
-              <div
-                className={`max-w-[82%] rounded-3xl px-6 py-4 text-[15px] leading-relaxed shadow-sm transition-all ${
-                  msg.role === "user"
-                    ? "bg-gradient-to-br from-cyan-500 to-violet-500 text-white"
-                    : "bg-zinc-900/90 border border-white/10 text-zinc-100"
-                }`}
-              >
-                {msg.role === "assistant" && (
-                  <div className="uppercase text-[10px] tracking-[2px] text-cyan-400 mb-2.5 font-mono">BUILDLIO</div>
-                )}
-                {msg.content}
-              </div>
-            </div>
-          ))}
-
-          {isRunning && (
-            <div className="flex justify-start">
-              <div className="flex items-center gap-3 bg-zinc-900/90 border border-white/10 rounded-3xl px-6 py-4">
-                <div className="flex gap-1">
-                  <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce" />
-                  <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce [animation-delay:150ms]" />
-                  <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce [animation-delay:300ms]" />
-                </div>
-                <span className="text-sm text-zinc-400">Building your professional site...</span>
-              </div>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Prompt Area */}
-        <div className="p-6 border-t border-white/10 bg-zinc-900/90">
-          <div className="relative flex gap-3">
-            <textarea
-              ref={textareaRef}
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              onInput={handleInput}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey && !isRunning) {
-                  e.preventDefault();
-                  sendMessage();
-                }
-              }}
-              placeholder="Describe your business or website idea..."
-              className="flex-1 resize-none bg-zinc-950 border border-white/10 focus:border-cyan-400 focus:ring-2 focus:ring-cyan-400/30 rounded-3xl pl-7 pr-6 py-5 text-sm outline-none min-h-[56px] max-h-[180px] transition-all"
-              disabled={isRunning}
-              rows={1}
-            />
-
-            <button
-              onClick={sendMessage}
-              disabled={isRunning || !chatInput.trim()}
-              className="flex-shrink-0 w-12 h-12 mt-auto mb-1 bg-gradient-to-br from-cyan-400 to-violet-500 rounded-2xl flex items-center justify-center disabled:opacity-40 hover:scale-110 active:scale-95 transition-all shadow-lg shadow-cyan-500/30"
-            >
-              <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5 text-black" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 12L3.269 3.126A59.768 59.768 0 0121.485 12 59.77 59.77 0 013.27 20.874L5.999 12zm0 0h7.07" />
-              </svg>
-            </button>
-          </div>
-
-          <div className="mt-4 flex items-center justify-between text-[10px] text-zinc-500">
-            <div>Credits only consumed on successful validated builds</div>
-            <button onClick={() => window.location.reload()} className="hover:text-white transition">
-              View plans →
-            </button>
-          </div>
-        </div>
-      </>
-    );
-  }
-);
 
 export default function BuildlioApp() {
   const [view, setView] = useState<ViewState>("landing");
 
   const supabase = useMemo(
     () =>
-      createBrowserClient(
-        process.env.NEXT_PUBLIC_SUPABASE_URL!,
-        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-      ),
+      createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
     []
   );
 
-  const [user, setUser] = useState<{ email?: string; id?: string } | null>(null);
-
-  // Auth
-  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
+  const [user, setUser] = useState<UserLite>(null);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [authBusy, setAuthBusy] = useState(false);
 
-  // Builder
   const [projectId, setProjectId] = useState("");
   const [isRunning, setIsRunning] = useState(false);
   const [snapshot, setSnapshot] = useState<any>(null);
-  const [history, setHistory] = useState<VersionRow[]>([]);
+  const [history, setHistory] = useState<any[]>([]);
   const [activePageSlug, setActivePageSlug] = useState("index");
-
-  // Credits + Plan
-  const [plan, setPlan] = useState<PlanKey>("free");
-  const [billing, setBilling] = useState<Billing>("monthly");
-  const [creditBalance, setCreditBalance] = useState(0);
-  const [creditsResetAt, setCreditsResetAt] = useState<string | null>(null);
+  const [creditBalance, setCreditBalance] = useState(10);
 
   // Chat
   const [chatInput, setChatInput] = useState("");
@@ -196,16 +108,18 @@ export default function BuildlioApp() {
     {
       role: "assistant",
       content:
-        "Hi, I'm Buildlio — your AI website architect. Tell me about your business and I'll instantly generate a stunning, fully responsive professional website.",
+        "Hi, I'm Buildlio — your AI website architect. Tell me about your business or idea and I'll instantly create a stunning professional website with navbar, rich sections, testimonials, pricing, FAQ, and footer.",
     },
   ]);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Tabs & Logs
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLInputElement>(null);
+
+  // Build Console & Tabs
   const [activeTab, setActiveTab] = useState<Tab>("chat");
   const [buildLogs, setBuildLogs] = useState<LogEntry[]>([]);
 
-  const addLog = useCallback((message: string, type: LogEntry["type"] = "info") => {
+  const addLog = (message: string, type: LogEntry["type"] = "info") => {
     setBuildLogs((prev) => [
       ...prev,
       {
@@ -214,220 +128,51 @@ export default function BuildlioApp() {
         type,
       },
     ]);
-  }, []);
-
-  // ========================= ANCHOR:TIER_CONFIG =========================
-  const PLAN_CONFIG: Record<PlanKey, any> = {
-    free: {
-      label: "Free",
-      tagline: "Try it. Build a real site, fast.",
-      monthlyPrice: 0,
-      annualPrice: 0,
-      monthlyCredits: 5,
-      seats: "1 seat",
-      export: "Export HTML",
-      publish: "Preview only",
-      support: "Community",
-      versioning: "Basic history",
-      guardrails: ["Only charged on valid snapshots", "Failed builds are free"],
-      features: ["5 builds/mo", "Full snapshot", "Export HTML", "Version history"],
-    },
-    starter: {
-      label: "Starter",
-      tagline: "For solo founders & local businesses",
-      monthlyPrice: 19,
-      annualPrice: 15,
-      monthlyCredits: 50,
-      popular: true,
-      seats: "1 seat",
-      export: "HTML + favicon + SEO",
-      publish: "Custom domain ready",
-      support: "Email support",
-      versioning: "Restore any version",
-      guardrails: ["Only charged on valid snapshots", "Failed builds are free"],
-      features: ["50 builds/mo", "Multi-page sites", "High-converting copy", "Version restore"],
-    },
-    pro: {
-      label: "Pro",
-      tagline: "For agencies & serious creators",
-      monthlyPrice: 49,
-      annualPrice: 39,
-      monthlyCredits: 200,
-      seats: "3 seats",
-      export: "HTML + full bundle",
-      publish: "Publish history",
-      support: "Priority",
-      versioning: "Advanced rollback",
-      guardrails: ["Only charged on valid snapshots", "Failed builds are free"],
-      features: ["200 builds/mo", "3 team seats", "Premium polish", "Fast restore"],
-    },
-    agency: {
-      label: "Agency",
-      tagline: "White-label scale for client work",
-      monthlyPrice: 149,
-      annualPrice: 119,
-      monthlyCredits: 800,
-      seats: "10 seats",
-      export: "Client-ready handoff",
-      publish: "Multi-site tooling",
-      support: "Concierge",
-      versioning: "Team controls",
-      guardrails: ["Only charged on valid snapshots", "Failed builds are free"],
-      features: ["800 builds/mo", "10 seats", "Client exports", "Priority routing"],
-    },
   };
 
-  const currentPlanCfg = PLAN_CONFIG[plan];
-
-  const formatPrice = (p: number) => (p === 0 ? "$0" : `$${p}`);
-  const displayPlanPrice = (key: PlanKey) => {
-    const cfg = PLAN_CONFIG[key];
-    if (key === "free") return "$0";
-    const price = billing === "monthly" ? cfg.monthlyPrice : cfg.annualPrice;
-    return formatPrice(price);
-  };
-
-  // ========================= Auth Session =========================
+  // ✅ Focus lock: prevents the "1 letter then click" issue
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
-      const u = data?.user;
-      setUser(u ? { email: u.email ?? undefined, id: u.id } : null);
-    });
+    if (view === "builder" && activeTab === "chat" && !isRunning) {
+      const t = setTimeout(() => chatInputRef.current?.focus(), 0);
+      return () => clearTimeout(t);
+    }
+  }, [view, activeTab, isRunning]);
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_, session) => {
-      const u = session?.user;
-      setUser(u ? { email: u.email ?? undefined, id: u.id } : null);
-    });
-
-    return () => listener.subscription.unsubscribe();
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data }) =>
+      setUser(data?.user ? { email: data.user.email, id: data.user.id } : null)
+    );
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_, session) =>
+      setUser(session?.user ? { email: session.user.email, id: session.user.id } : null)
+    );
+    return () => subscription.unsubscribe();
   }, [supabase]);
+
+  useEffect(() => {
+    if (view === "builder" && projectId) fetchHistory();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, view]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Load profile on login
-  useEffect(() => {
-    if (user?.id) {
-      void ensureProfileAndLoad();
-    } else {
-      setPlan("free");
-      setCreditBalance(0);
-      setCreditsResetAt(null);
-      setProjectId("");
-      setSnapshot(null);
-      setHistory([]);
-      setActivePageSlug("index");
-      setMessages([
-        {
-          role: "assistant",
-          content:
-            "Hi, I'm Buildlio — your AI website architect. Tell me about your business and I'll instantly generate a stunning, fully responsive professional website.",
-        },
-      ]);
-    }
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (view === "builder" && projectId) void fetchHistory(projectId);
-  }, [projectId, view]);
-
-  // ========================= ANCHOR:SUPABASE_PROFILE =========================
-  async function ensureProfileAndLoad() {
-    if (!user?.id) return;
-    const { data: prof, error: profErr } = await supabase
-      .from("profiles")
-      .select("id,email,plan,credits_balance,credits_reset_at")
-      .eq("id", user.id)
-      .maybeSingle<ProfileRow>();
-
-    if (profErr || !prof) {
-      const now = new Date();
-      const resetAt = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0).toISOString();
-      await supabase.from("profiles").insert({
-        id: user.id,
-        email: user.email ?? null,
-        plan: "free",
-        credits_balance: PLAN_CONFIG.free.monthlyCredits,
-        credits_reset_at: resetAt,
-      });
-      setPlan("free");
-      setCreditBalance(PLAN_CONFIG.free.monthlyCredits);
-      setCreditsResetAt(resetAt);
-      return;
-    }
-
-    const pPlan = (prof.plan ?? "free") as PlanKey;
-    const planCredits = PLAN_CONFIG[pPlan]?.monthlyCredits ?? PLAN_CONFIG.free.monthlyCredits;
-    const resetAt = prof.credits_reset_at ? new Date(prof.credits_reset_at) : null;
-    const now = new Date();
-
-    if (!resetAt || resetAt.getTime() <= now.getTime()) {
-      const nextResetAt = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0).toISOString();
-      await supabase
-        .from("profiles")
-        .update({ plan: pPlan, credits_balance: planCredits, credits_reset_at: nextResetAt })
-        .eq("id", user.id);
-      setPlan(pPlan);
-      setCreditBalance(planCredits);
-      setCreditsResetAt(nextResetAt);
-      return;
-    }
-
-    setPlan(pPlan);
-    setCreditBalance(prof.credits_balance ?? planCredits);
-    setCreditsResetAt(prof.credits_reset_at ?? null);
-  }
-
-  async function setPlanAndCredits(nextPlan: PlanKey) {
-    setPlan(nextPlan);
-    const credits = PLAN_CONFIG[nextPlan].monthlyCredits;
-    setCreditBalance(credits);
-    const now = new Date();
-    const nextResetAt = new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0).toISOString();
-    setCreditsResetAt(nextResetAt);
-
-    if (user?.id) {
-      await supabase.from("profiles").upsert({
-        id: user.id,
-        email: user.email ?? null,
-        plan: nextPlan,
-        credits_balance: credits,
-        credits_reset_at: nextResetAt,
-      });
-    }
-  }
-
-  async function fetchHistory(pid: string) {
+  async function fetchHistory() {
     const { data } = await supabase
       .from("versions")
-      .select("id,project_id,version_no,snapshot,created_at")
-      .eq("project_id", pid)
+      .select("*")
+      .eq("project_id", projectId)
       .order("version_no", { ascending: false });
-    if (data) setHistory(data as VersionRow[]);
+    if (data) setHistory(data);
   }
 
-  // ========================= Auth =========================
   async function handleAuth() {
-    setAuthError(null);
-    setAuthBusy(true);
-    try {
-      if (authMode === "signin") {
-        const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password: loginPassword });
-        if (error) throw error;
-      } else {
-        const { error } = await supabase.auth.signUp({ email: loginEmail, password: loginPassword });
-        if (error) throw error;
-      }
-      setView("builder");
-    } catch (e: any) {
-      setAuthError(e?.message ?? "Authentication failed");
-    } finally {
-      setAuthBusy(false);
-    }
+    const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password: loginPassword });
+    if (!error) setView("builder");
   }
 
-  // ========================= ANCHOR:EXPORT =========================
   function exportHTML() {
     if (!snapshot) return;
     const currentPage = snapshot.pages?.find((p: any) => p.slug === activePageSlug) || snapshot.pages?.[0];
@@ -444,27 +189,194 @@ export default function BuildlioApp() {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${currentPage.title || siteName}</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>body { font-family: system-ui, sans-serif; }</style>
+  <style>
+    body { font-family: system-ui, -apple-system, sans-serif; }
+  </style>
 </head>
 <body class="bg-zinc-50 text-zinc-900">
-  <!-- Navbar, content, footer same as original but cleaned -->
+
+  <!-- Navbar -->
   <nav class="bg-white border-b sticky top-0 z-50 shadow-sm">
     <div class="max-w-7xl mx-auto px-8 h-20 flex items-center justify-between">
       <div class="flex items-center gap-3">
         <div class="font-black text-3xl tracking-tighter">${siteName}</div>
-        ${tagline ? `<div class="text-sm text-zinc-500">${tagline}</div>` : ""}
+        ${tagline ? `<div class="text-sm text-zinc-500 ml-2">${tagline}</div>` : ""}
       </div>
-      <div class="flex gap-10 text-sm font-medium">${navItems.map((item: string) => `<a href="#" class="hover:text-cyan-600">${item}</a>`).join("")}</div>
-      <a href="#" class="bg-zinc-900 text-white px-8 py-3 rounded-2xl font-semibold hover:bg-black">Get Started</a>
+      <div class="flex items-center gap-10 text-sm font-medium">
+        ${navItems.map((item: string) => `<a href="#" class="hover:text-cyan-600 transition">${item}</a>`).join("")}
+      </div>
+      <a href="#" class="bg-zinc-900 text-white px-8 py-3 rounded-2xl font-semibold hover:bg-black transition">Get Started</a>
     </div>
   </nav>
-  <main>${currentPage.blocks?.map((b: any) => {
-      // (same block rendering as original - kept for brevity)
-      return "";
-    }).join("")}
+
+  <!-- Page Content -->
+  <main>
+    ${currentPage.blocks
+      ?.map((block: any) => {
+        if (block.type === "hero")
+          return `
+        <section class="py-32 bg-gradient-to-br from-zinc-900 to-black text-white text-center">
+          <div class="max-w-5xl mx-auto px-6">
+            <h1 class="text-7xl font-black tracking-[-2px] mb-6">${block.headline}</h1>
+            <p class="text-2xl text-zinc-400 max-w-3xl mx-auto">${block.subhead}</p>
+            ${block.cta ? `<a href="#" class="mt-12 inline-block bg-white text-black px-12 py-4 rounded-3xl font-bold text-lg hover:scale-105 transition">${block.cta.label}</a>` : ""}
+          </div>
+        </section>`;
+
+        if (block.type === "features")
+          return `
+        <section class="py-28 bg-white">
+          <div class="max-w-6xl mx-auto px-6">
+            ${block.title ? `<h2 class="text-4xl font-semibold text-center mb-16">${block.title}</h2>` : ""}
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+              ${block.items
+                ?.map(
+                  (item: any) => `
+                <div class="bg-zinc-50 hover:bg-white border border-transparent hover:border-zinc-200 p-10 rounded-3xl transition-all">
+                  <h3 class="text-2xl font-semibold mb-4">${item.title}</h3>
+                  <p class="text-zinc-600">${item.description}</p>
+                </div>
+              `
+                )
+                .join("")}
+            </div>
+          </div>
+        </section>`;
+
+        if (block.type === "stats")
+          return `
+        <section class="py-20 bg-white border-t border-b">
+          <div class="max-w-6xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-12 text-center">
+            ${block.stats
+              ?.map(
+                (s: any) => `
+              <div>
+                <div class="text-6xl font-black text-cyan-600">${s.value}</div>
+                <div class="text-zinc-600 mt-2 font-medium">${s.label}</div>
+              </div>
+            `
+              )
+              .join("")}
+          </div>
+        </section>`;
+
+        if (block.type === "testimonials")
+          return `
+        <section class="py-28 bg-zinc-50">
+          <div class="max-w-6xl mx-auto px-6">
+            <h2 class="text-4xl font-semibold text-center mb-16">What our customers say</h2>
+            <div class="grid md:grid-cols-3 gap-8">
+              ${block.items
+                ?.map(
+                  (t: any) => `
+                <div class="bg-white p-10 rounded-3xl border">
+                  <p class="italic text-lg leading-relaxed">"${t.quote}"</p>
+                  <div class="mt-8 flex items-center gap-3">
+                    <div class="w-10 h-10 bg-zinc-200 rounded-full"></div>
+                    <div>
+                      <div class="font-semibold">${t.name}</div>
+                      <div class="text-sm text-zinc-500">${t.role}${t.company ? ` at ${t.company}` : ""}</div>
+                    </div>
+                  </div>
+                </div>
+              `
+                )
+                .join("")}
+            </div>
+          </div>
+        </section>`;
+
+        if (block.type === "pricing")
+          return `
+        <section class="py-28 bg-white">
+          <div class="max-w-6xl mx-auto px-6">
+            <h2 class="text-4xl font-semibold text-center mb-16">Simple pricing</h2>
+            <div class="grid md:grid-cols-3 gap-8">
+              ${block.plans
+                ?.map(
+                  (plan: any) => `
+                <div class="${plan.popular ? "ring-2 ring-cyan-500 scale-105" : ""} bg-white border rounded-3xl p-10 transition">
+                  <h3 class="text-2xl font-semibold">${plan.name}</h3>
+                  <div class="mt-6 flex items-baseline">
+                    <span class="text-6xl font-black">${plan.price}</span>
+                    <span class="ml-2 text-zinc-500">${plan.interval}</span>
+                  </div>
+                  <ul class="mt-10 space-y-4">
+                    ${plan.features?.map((f: string) => `<li class="flex items-center gap-3"><span class="text-emerald-500">✔</span> ${f}</li>`).join("")}
+                  </ul>
+                  <a href="#" class="mt-12 block text-center py-4 bg-zinc-900 text-white rounded-2xl font-semibold">${plan.cta || "Get started"}</a>
+                </div>
+              `
+                )
+                .join("")}
+            </div>
+          </div>
+        </section>`;
+
+        if (block.type === "faq")
+          return `
+        <section class="py-28 bg-zinc-50">
+          <div class="max-w-3xl mx-auto px-6">
+            <h2 class="text-4xl font-semibold text-center mb-16">Frequently asked questions</h2>
+            ${block.items
+              ?.map(
+                (item: any) => `
+              <details class="group border-b py-6">
+                <summary class="flex justify-between items-center font-medium cursor-pointer list-none">
+                  ${item.q}
+                  <span class="text-xl group-open:rotate-45 transition">+</span>
+                </summary>
+                <p class="mt-4 text-zinc-600">${item.a}</p>
+              </details>
+            `
+              )
+              .join("")}
+          </div>
+        </section>`;
+
+        if (block.type === "content")
+          return `
+        <section class="py-24 max-w-3xl mx-auto px-6 prose prose-zinc prose-lg">
+          ${block.title ? `<h2>${block.title}</h2>` : ""}
+          <div>${block.body || block.content || ""}</div>
+        </section>`;
+
+        if (block.type === "cta")
+          return `
+        <section class="py-28 bg-gradient-to-r from-cyan-600 to-violet-600 text-white text-center">
+          <div class="max-w-3xl mx-auto px-6">
+            <h2 class="text-5xl font-black tracking-tight">${block.headline}</h2>
+            <p class="mt-6 text-xl">${block.subhead}</p>
+            ${block.buttonLabel ? `<a href="#" class="mt-10 inline-block bg-white text-black px-12 py-4 rounded-3xl font-bold text-lg">${block.buttonLabel}</a>` : ""}
+          </div>
+        </section>`;
+
+        return "";
+      })
+      .join("")}
   </main>
+
+  <!-- Footer -->
   <footer class="bg-zinc-950 text-zinc-400 py-20">
-    <div class="max-w-7xl mx-auto px-8 text-center text-xs opacity-60">© ${new Date().getFullYear()} ${siteName} • Built with Buildlio</div>
+    <div class="max-w-7xl mx-auto px-8 grid grid-cols-2 md:grid-cols-4 gap-10">
+      <div>
+        <div class="font-black text-white text-3xl tracking-tighter">${siteName}</div>
+        ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
+      </div>
+      <div>
+        <div class="font-semibold text-white mb-4">Product</div>
+        <div class="space-y-3 text-sm">${navItems.map((i: string) => `<div>${i}</div>`).join("")}</div>
+      </div>
+      <div>
+        <div class="font-semibold text-white mb-4">Company</div>
+        <div class="space-y-3 text-sm"><div>About</div><div>Blog</div><div>Careers</div></div>
+      </div>
+      <div>
+        <div class="font-semibold text-white mb-4">Legal</div>
+        <div class="space-y-3 text-sm"><div>Privacy</div><div>Terms</div></div>
+      </div>
+    </div>
+    <div class="text-center text-xs mt-20 opacity-60">© ${new Date().getFullYear()} ${siteName} • Built instantly with Buildlio</div>
   </footer>
 </body>
 </html>`;
@@ -478,16 +390,11 @@ export default function BuildlioApp() {
     URL.revokeObjectURL(url);
   }
 
-  // ========================= Build Pipeline =========================
-  const sendMessage = useCallback(async () => {
+  async function sendMessage() {
     if (!chatInput.trim() || isRunning) return;
-    if (!user?.id) {
-      setView("auth");
-      return;
-    }
+
     if (creditBalance <= 0) {
-      setMessages((prev) => [...prev, { role: "assistant", content: "⚠️ Out of credits this month. Upgrade to keep building." }]);
-      setView("pricing");
+      setMessages((prev) => [...prev, { role: "assistant", content: "⚠️ Out of credits. Please upgrade to keep building." }]);
       return;
     }
 
@@ -499,24 +406,31 @@ export default function BuildlioApp() {
     setBuildLogs([]);
     setActiveTab("console");
 
-    const addLogWithDelay = async (msg: string, type: LogEntry["type"] = "info", delay = 320) => {
-      await new Promise((r) => setTimeout(r, delay));
+    const addLogWithDelay = async (msg: string, type: LogEntry["type"] = "info", delayMs = 380) => {
+      await new Promise((r) => setTimeout(r, delayMs));
       addLog(msg, type);
     };
 
     try {
-      await addLogWithDelay("🔍 Analyzing requirements...", "info");
-      await addLogWithDelay("📐 Designing premium layout", "info");
-      await addLogWithDelay("✍️ Writing high-converting copy", "info");
+      await addLogWithDelay("🔍 Analyzing your requirements...", "info");
+      await addLogWithDelay("📐 Designing premium layout & navigation", "info");
+      await addLogWithDelay("✍️ Writing high-converting marketing copy", "info");
 
       let currentPid = projectId;
       if (!currentPid) {
-        const { data: proj } = await supabase
+        if (!user) throw new Error("Please log in first.");
+
+        const { data: proj, error: projError } = await supabase
           .from("projects")
           .insert({ owner_id: user.id, name: "Professional Site", slug: `pro-${Date.now()}` })
           .select("id")
           .single();
-        currentPid = proj!.id;
+
+        if (projError || !proj?.id) {
+          throw new Error(projError?.message || "Could not create project.");
+        }
+
+        currentPid = proj.id;
         setProjectId(currentPid);
       }
 
@@ -529,100 +443,31 @@ export default function BuildlioApp() {
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Build failed");
+      if (!res.ok || !data.success) throw new Error(data.error || "Server error");
 
       const aiResponse = data.data;
 
       await addLogWithDelay("🎨 Rendering beautiful sections...", "info");
-      await addLogWithDelay("📝 Final polish & validation...", "info");
+      await addLogWithDelay("📝 Adding rich content, FAQ & final polish", "info");
 
       setMessages((prev) => [...prev, { role: "assistant", content: aiResponse.message }]);
 
       if (aiResponse.type === "build" && aiResponse.snapshot) {
         setSnapshot(aiResponse.snapshot);
-        const newBalance = Math.max(0, creditBalance - 1);
-        setCreditBalance(newBalance);
-
-        if (user?.id) {
-          await supabase.from("profiles").update({ credits_balance: newBalance }).eq("id", user.id);
-        }
-
-        await fetchHistory(currentPid);
-        await addLogWithDelay("✅ Professional website ready — validated snapshot created", "success");
-      } else {
-        await addLogWithDelay("⚠️ No valid snapshot — no credit used", "info");
+        setCreditBalance((prev) => prev - 1);
+        fetchHistory();
+        await addLogWithDelay("✅ Full professional website ready — with navigation, footer & every section", "success");
       }
-
-      await ensureProfileAndLoad();
     } catch (err: any) {
       const errMsg = `❌ ${err.message}`;
-      setMessages((prev) => [...prev, { role: "assistant", content: errMsg + "\n\nFailed builds never consume credits." }]);
+      setMessages((prev) => [...prev, { role: "assistant", content: errMsg }]);
       addLog(errMsg, "error");
     } finally {
       setIsRunning(false);
-      setTimeout(() => setActiveTab("chat"), 1200);
+      setTimeout(() => setActiveTab("chat"), 1600);
     }
-  }, [chatInput, isRunning, user, creditBalance, messages, projectId, supabase, addLog]);
+  }
 
-  // ========================= Small UI Helpers =========================
-  const PlanPill = () => (
-    <div className="flex items-center gap-2">
-      <div className="px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] uppercase tracking-[2px] text-zinc-300">
-        {currentPlanCfg.label}
-      </div>
-      <div className="px-4 py-1 rounded-full bg-gradient-to-r from-cyan-500/10 to-violet-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono tracking-widest">
-        {creditBalance} CR
-      </div>
-    </div>
-  );
-
-  const CreditsMeta = () => {
-    const nextReset = creditsResetAt ? new Date(creditsResetAt) : null;
-    return (
-      <div className="text-[11px] text-zinc-500">
-        {currentPlanCfg.monthlyCredits} credits / month • Only charged on success
-        {nextReset && <span className="font-mono block mt-0.5">Resets {nextReset.toLocaleDateString()}</span>}
-      </div>
-    );
-  };
-
-  // ========================= TopNav =========================
-  const TopNav = () => (
-    <nav className="h-14 bg-zinc-950/95 backdrop-blur-3xl border-b border-white/10 flex items-center justify-between px-6 z-50">
-      <div className="flex items-center gap-3">
-        <div className="w-7 h-7 bg-gradient-to-br from-cyan-400 to-violet-500 rounded-2xl flex items-center justify-center text-sm font-black text-black">⬡</div>
-        <span className="font-black text-2xl tracking-[-1px] text-white">buildlio</span>
-        <span className="text-cyan-400 text-sm font-mono -ml-1">.site</span>
-      </div>
-
-      <div className="flex items-center gap-8 text-sm font-medium">
-        <button onClick={() => setView("builder")} className={`transition-colors ${view === "builder" ? "text-white" : "text-zinc-400 hover:text-white"}`}>
-          Builder
-        </button>
-        <button onClick={() => setView("pricing")} className={`transition-colors ${view === "pricing" ? "text-white" : "text-zinc-400 hover:text-white"}`}>
-          Pricing
-        </button>
-      </div>
-
-      <div className="flex items-center gap-4">
-        {user ? (
-          <>
-            <PlanPill />
-            <span className="text-xs text-zinc-500 hidden md:block">{user.email}</span>
-            <button onClick={async () => { await supabase.auth.signOut(); setView("landing"); }} className="text-xs text-zinc-400 hover:text-white">
-              Sign out
-            </button>
-          </>
-        ) : (
-          <button onClick={() => setView("auth")} className="font-medium text-sm text-zinc-300 hover:text-white">
-            Log in
-          </button>
-        )}
-      </div>
-    </nav>
-  );
-
-  // ========================= SitePreview =========================
   const SitePreview = () => {
     const currentPage = snapshot?.pages?.find((p: any) => p.slug === activePageSlug) || snapshot?.pages?.[0];
     const navItems = snapshot?.navigation?.items || ["Home", "Features", "Pricing", "About", "Contact"];
@@ -630,7 +475,7 @@ export default function BuildlioApp() {
     const tagline = snapshot?.tagline || "";
 
     return (
-      <div className="flex-1 bg-zinc-950 flex flex-col overflow-hidden relative">
+      <div className="flex-1 bg-zinc-950 flex flex-col relative overflow-hidden">
         {/* Browser chrome */}
         <div className="h-11 bg-zinc-900 flex items-center px-4 border-b border-zinc-800">
           <div className="flex gap-1.5">
@@ -643,13 +488,13 @@ export default function BuildlioApp() {
           </div>
         </div>
 
-        <div className="flex-1 overflow-auto bg-white shadow-2xl">
-          {/* Navbar */}
+        <div className="flex-1 overflow-auto bg-white">
+          {/* Professional Navbar */}
           <nav className="bg-white border-b sticky top-0 z-40 shadow-sm">
             <div className="max-w-7xl mx-auto px-8 h-20 flex items-center justify-between">
               <div className="flex items-center gap-4">
                 <div className="font-black text-3xl tracking-tighter">{siteName}</div>
-                {tagline && <div className="text-sm text-zinc-500 max-w-72">{tagline}</div>}
+                {tagline && <div className="text-sm text-zinc-500 max-w-72 leading-tight">{tagline}</div>}
               </div>
               <div className="flex items-center gap-9 text-sm font-medium text-zinc-700">
                 {navItems.map((item: string, i: number) => (
@@ -658,22 +503,168 @@ export default function BuildlioApp() {
                   </a>
                 ))}
               </div>
-              <button className="bg-zinc-900 hover:bg-black text-white px-7 py-3 rounded-2xl font-semibold text-sm transition">Get in touch</button>
+              <button className="bg-zinc-900 hover:bg-black text-white px-7 py-3 rounded-2xl font-semibold text-sm transition">
+                Get in touch
+              </button>
             </div>
           </nav>
 
           {!snapshot ? (
-            <div className="h-full flex flex-col items-center justify-center bg-zinc-50">
-              <div className="text-8xl opacity-10 mb-8">⬡</div>
-              <p className="text-xl font-medium text-zinc-400">Your beautiful website will appear here</p>
-              <p className="text-sm text-zinc-500 mt-2">Start chatting on the left</p>
+            <div className="h-[calc(100vh-110px)] flex flex-col items-center justify-center bg-zinc-50">
+              <div className="text-8xl opacity-10 mb-6">⬡</div>
+              <p className="text-xl font-medium text-zinc-400">
+                Chat with Buildlio — a full professional site will appear here
+              </p>
             </div>
           ) : (
             <div className="pb-12">
               {currentPage?.blocks?.map((block: any, i: number) => (
                 <div key={i}>
-                  {/* All block types rendered with polished Tailwind (same as original but with better spacing and hover states) */}
-                  {/* ... (kept identical to v5.0 for brevity - fully functional) ... */}
+                  {block.type === "hero" && (
+                    <section className="py-32 bg-gradient-to-br from-zinc-900 via-black to-zinc-950 text-white text-center">
+                      <div className="max-w-5xl mx-auto px-6">
+                        <h1 className="text-7xl md:text-[5.5rem] font-black tracking-[-3px] leading-none mb-8">
+                          {block.headline}
+                        </h1>
+                        <p className="text-2xl text-zinc-400 max-w-3xl mx-auto">{block.subhead}</p>
+                        {block.cta && (
+                          <button className="mt-12 bg-white text-black px-14 py-4 rounded-3xl font-bold text-xl hover:scale-105 transition">
+                            {block.cta.label}
+                          </button>
+                        )}
+                      </div>
+                    </section>
+                  )}
+
+                  {block.type === "features" && (
+                    <section className="py-28 bg-white">
+                      <div className="max-w-6xl mx-auto px-6">
+                        {block.title && <h2 className="text-4xl font-semibold text-center mb-16">{block.title}</h2>}
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                          {block.items?.map((item: any, j: number) => (
+                            <div key={j} className="group bg-zinc-50 hover:bg-white border p-10 rounded-3xl transition-all">
+                              <h3 className="text-2xl font-semibold mb-4 group-hover:text-cyan-600 transition">
+                                {item.title}
+                              </h3>
+                              <p className="text-zinc-600 leading-relaxed">{item.description}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+                  )}
+
+                  {block.type === "stats" && (
+                    <section className="py-24 bg-white border-t border-b">
+                      <div className="max-w-6xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-12 text-center">
+                        {block.stats?.map((s: any, j: number) => (
+                          <div key={j}>
+                            <div className="text-7xl font-black text-cyan-600 tracking-tighter">{s.value}</div>
+                            <div className="mt-3 font-medium text-zinc-600">{s.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  )}
+
+                  {block.type === "testimonials" && (
+                    <section className="py-28 bg-zinc-50">
+                      <div className="max-w-6xl mx-auto px-6">
+                        <h2 className="text-4xl font-semibold text-center mb-16">Real stories</h2>
+                        <div className="grid md:grid-cols-3 gap-8">
+                          {block.items?.map((t: any, j: number) => (
+                            <div key={j} className="bg-white p-10 rounded-3xl border shadow-sm">
+                              <p className="italic text-xl leading-relaxed">“{t.quote}”</p>
+                              <div className="mt-8 flex items-center gap-4">
+                                <div className="w-11 h-11 bg-gradient-to-br from-cyan-200 to-violet-200 rounded-full" />
+                                <div>
+                                  <div className="font-semibold">{t.name}</div>
+                                  <div className="text-sm text-zinc-500">
+                                    {t.role}
+                                    {t.company ? ` • ${t.company}` : ""}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+                  )}
+
+                  {block.type === "pricing" && (
+                    <section className="py-28 bg-white">
+                      <div className="max-w-6xl mx-auto px-6">
+                        <h2 className="text-4xl font-semibold text-center mb-16">Choose your plan</h2>
+                        <div className="grid md:grid-cols-3 gap-8">
+                          {block.plans?.map((plan: any, j: number) => (
+                            <div
+                              key={j}
+                              className={`rounded-3xl p-10 border transition-all ${
+                                plan.popular ? "ring-2 ring-offset-4 ring-cyan-500 scale-[1.03]" : "hover:shadow-xl"
+                              }`}
+                            >
+                              <div className="font-semibold text-lg">{plan.name}</div>
+                              <div className="mt-8 flex items-baseline gap-1">
+                                <span className="text-6xl font-black tracking-tighter">{plan.price}</span>
+                                <span className="text-zinc-400">/{plan.interval}</span>
+                              </div>
+                              <ul className="mt-12 space-y-4 text-sm">
+                                {plan.features?.map((f: string, k: number) => (
+                                  <li key={k} className="flex items-start gap-3">
+                                    <span className="text-emerald-500 mt-0.5">✔</span> {f}
+                                  </li>
+                                ))}
+                              </ul>
+                              <button className="mt-12 w-full py-4 bg-zinc-900 hover:bg-black text-white rounded-2xl font-semibold transition">
+                                {plan.cta || "Choose plan"}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+                  )}
+
+                  {block.type === "faq" && (
+                    <section className="py-28 bg-zinc-50">
+                      <div className="max-w-3xl mx-auto px-6">
+                        <h2 className="text-4xl font-semibold text-center mb-16">Questions?</h2>
+                        <div className="space-y-1">
+                          {block.items?.map((item: any, j: number) => (
+                            <details key={j} className="group border-b bg-white rounded-2xl px-8 py-6">
+                              <summary className="font-medium flex justify-between cursor-pointer list-none items-center">
+                                {item.q}
+                                <span className="text-2xl group-open:rotate-45 transition-transform">+</span>
+                              </summary>
+                              <p className="mt-6 text-zinc-600 pr-8">{item.a}</p>
+                            </details>
+                          ))}
+                        </div>
+                      </div>
+                    </section>
+                  )}
+
+                  {block.type === "content" && (
+                    <section className="py-24 max-w-4xl mx-auto px-6 prose prose-zinc prose-lg">
+                      {block.title && <h2 className="text-center mb-12">{block.title}</h2>}
+                      <div dangerouslySetInnerHTML={{ __html: block.body || block.content || "" }} />
+                    </section>
+                  )}
+
+                  {block.type === "cta" && (
+                    <section className="py-28 bg-gradient-to-br from-cyan-600 via-violet-600 to-fuchsia-600 text-white text-center">
+                      <div className="max-w-3xl mx-auto px-6">
+                        <h2 className="text-5xl font-black tracking-tight">{block.headline}</h2>
+                        <p className="mt-6 text-xl text-white/90">{block.subhead}</p>
+                        {block.buttonLabel && (
+                          <button className="mt-12 bg-white text-black px-14 py-4 rounded-3xl font-bold text-xl hover:scale-105 transition">
+                            {block.buttonLabel}
+                          </button>
+                        )}
+                      </div>
+                    </section>
+                  )}
                 </div>
               ))}
             </div>
@@ -681,301 +672,250 @@ export default function BuildlioApp() {
 
           {/* Footer */}
           <footer className="bg-zinc-950 text-zinc-400 py-20">
-            <div className="max-w-7xl mx-auto px-8 text-center text-xs opacity-60">
-              © {new Date().getFullYear()} {siteName} • Built instantly with Buildlio
+            <div className="max-w-7xl mx-auto px-8 grid grid-cols-2 md:grid-cols-4 gap-y-12">
+              <div>
+                <div className="font-black text-white text-3xl tracking-tighter">{siteName}</div>
+                {tagline && <p className="mt-2 text-sm">{tagline}</p>}
+              </div>
+              <div>
+                <div className="font-semibold text-white mb-5">Product</div>
+                <div className="space-y-2 text-sm">{navItems.map((i: string) => <div key={i}>{i}</div>)}</div>
+              </div>
+              <div>
+                <div className="font-semibold text-white mb-5">Company</div>
+                <div className="space-y-2 text-sm">
+                  <div>About Us</div>
+                  <div>Blog</div>
+                  <div>Careers</div>
+                </div>
+              </div>
+              <div>
+                <div className="font-semibold text-white mb-5">Legal</div>
+                <div className="space-y-2 text-sm">
+                  <div>Privacy Policy</div>
+                  <div>Terms of Service</div>
+                </div>
+              </div>
             </div>
+            <div className="text-center text-xs mt-16 opacity-60">© {new Date().getFullYear()} — Instant professional websites by Buildlio</div>
           </footer>
         </div>
       </div>
     );
   };
 
-  // ========================= Pricing View =========================
-  const PricingView = () => {
-    const keys: PlanKey[] = ["free", "starter", "pro", "agency"];
-    return (
-      <div className="flex-1 overflow-auto bg-zinc-950">
-        <div className="max-w-6xl mx-auto px-6 py-16">
-          <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-10">
-            <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/5 border border-white/10 text-[10px] uppercase tracking-[2px] text-zinc-300">
-                Pricing • Credits-based
-              </div>
-              <h1 className="mt-6 text-6xl font-black tracking-[-2.5px] text-white leading-none">
-                Build more.<br />Pay smarter.
-              </h1>
-              <p className="mt-5 text-zinc-400 text-lg max-w-xl">
-                Every successful site snapshot costs one credit. Failed builds are always free.
-              </p>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <div className="text-xs text-zinc-400">Cycle</div>
-              <div className="bg-white/5 border border-white/10 rounded-2xl p-1 flex">
-                <button onClick={() => setBilling("monthly")} className={`px-5 py-2 rounded-xl text-sm font-medium transition ${billing === "monthly" ? "bg-white text-black" : "text-zinc-300 hover:text-white"}`}>
-                  Monthly
-                </button>
-                <button onClick={() => setBilling("annual")} className={`px-5 py-2 rounded-xl text-sm font-medium transition ${billing === "annual" ? "bg-white text-black" : "text-zinc-300 hover:text-white"}`}>
-                  Annual <span className="text-emerald-400 text-xs">(save ~20%)</span>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-14 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {keys.map((k) => {
-              const cfg = PLAN_CONFIG[k];
-              const isCurrent = plan === k;
-              const savings = billing === "annual" && k !== "free" ? Math.round(((cfg.monthlyPrice - cfg.annualPrice) / cfg.monthlyPrice) * 100) : 0;
-
-              return (
-                <div
-                  key={k}
-                  className={`relative rounded-3xl border p-8 bg-zinc-900/70 backdrop-blur-3xl transition-all hover:-translate-y-2 duration-300 ${
-                    cfg.popular ? "border-cyan-400 ring-2 ring-cyan-400/30" : "border-white/10 hover:border-white/30"
-                  }`}
-                >
-                  {cfg.popular && (
-                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-5 py-1 bg-gradient-to-r from-cyan-400 to-violet-500 text-black text-xs font-black tracking-widest rounded-full">
-                      MOST POPULAR
-                    </div>
-                  )}
-                  {isCurrent && (
-                    <div className="absolute top-6 right-6 px-3 py-1 bg-emerald-400 text-black text-[10px] font-bold rounded-full">CURRENT</div>
-                  )}
-
-                  <div className="text-white font-black text-3xl">{cfg.label}</div>
-                  <div className="text-zinc-400 mt-1">{cfg.tagline}</div>
-
-                  <div className="mt-8 flex items-end gap-1">
-                    <span className="text-6xl font-black tracking-tighter text-white">{displayPlanPrice(k)}</span>
-                    <span className="text-zinc-400 mb-1">/mo</span>
-                  </div>
-                  {savings > 0 && <div className="text-emerald-400 text-sm mt-1">Save {savings}% billed annually</div>}
-
-                  <div className="mt-8 rounded-2xl bg-black/60 p-5 border border-white/10">
-                    <div className="text-xs uppercase tracking-widest text-zinc-500">Monthly credits</div>
-                    <div className="text-4xl font-black text-white mt-2">{cfg.monthlyCredits}</div>
-                  </div>
-
-                  <ul className="mt-8 space-y-3 text-sm">
-                    {cfg.features.map((f: string, i: number) => (
-                      <li key={i} className="flex gap-3 text-zinc-300">
-                        <span className="text-emerald-400 mt-0.5">✔</span> {f}
-                      </li>
-                    ))}
-                  </ul>
-
-                  <button
-                    onClick={async () => {
-                      if (!user?.id) {
-                        setView("auth");
-                        return;
-                      }
-                      await setPlanAndCredits(k);
-                      setView("builder");
-                    }}
-                    className={`mt-10 w-full py-4 rounded-2xl font-semibold transition-all active:scale-[0.985] ${k === "free" ? "bg-white/10 hover:bg-white/20 text-white" : "bg-white text-black hover:bg-zinc-100"}`}
-                  >
-                    {k === "free" ? "Stay on Free" : isCurrent ? "Current plan" : `Upgrade to ${cfg.label}`}
-                  </button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // ========================= Auth View =========================
-  const AuthView = () => (
-    <div className="flex-1 flex items-center justify-center bg-zinc-950">
-      <div className="w-full max-w-md bg-zinc-900/90 border border-white/10 p-10 rounded-3xl backdrop-blur-xl">
-        <div className="flex justify-between items-center mb-8">
-          <h2 className="text-4xl font-black tracking-tight">{authMode === "signin" ? "Welcome back" : "Create account"}</h2>
-          <button onClick={() => setAuthMode((m) => (m === "signin" ? "signup" : "signin"))} className="text-xs text-cyan-400 hover:text-cyan-300">
-            {authMode === "signin" ? "Create new" : "Sign in"}
-          </button>
-        </div>
-
-        <input
-          type="email"
-          placeholder="you@company.com"
-          value={loginEmail}
-          onChange={(e) => setLoginEmail(e.target.value)}
-          className="w-full bg-zinc-950 border border-white/10 rounded-2xl p-5 focus:border-cyan-400 outline-none mb-4"
-        />
-        <input
-          type="password"
-          placeholder="Password"
-          value={loginPassword}
-          onChange={(e) => setLoginPassword(e.target.value)}
-          className="w-full bg-zinc-950 border border-white/10 rounded-2xl p-5 focus:border-cyan-400 outline-none mb-6"
-        />
-
-        {authError && <div className="mb-6 text-red-400 bg-red-950/50 border border-red-900 p-4 rounded-2xl text-sm">{authError}</div>}
-
-        <button
-          onClick={handleAuth}
-          disabled={authBusy || !loginEmail || !loginPassword}
-          className="w-full py-5 bg-white text-black font-bold rounded-2xl hover:bg-zinc-100 disabled:opacity-60 transition"
-        >
-          {authBusy ? "Please wait..." : authMode === "signin" ? "Sign in" : "Create account"}
-        </button>
-      </div>
-    </div>
-  );
-
-  // ========================= Builder View =========================
-  const BuilderView = () => (
-    <div className="flex h-full w-full overflow-hidden">
-      {/* Sidebar */}
-      <aside className="w-96 border-r border-white/10 bg-zinc-950 flex flex-col">
-        <div className="p-6 border-b border-white/10">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <div className="w-10 h-10 bg-gradient-to-br from-cyan-400 to-violet-500 rounded-2xl flex items-center justify-center text-2xl text-black font-black">⬡</div>
-              <div>
-                <div className="font-semibold text-white">{user?.email}</div>
-                <div className="text-xs text-zinc-500">{currentPlanCfg.label} plan</div>
-              </div>
-            </div>
-            <button onClick={() => setView("pricing")} className="px-5 py-2 text-sm bg-white/5 hover:bg-white/10 border border-white/10 rounded-2xl transition">
-              Upgrade
-            </button>
-          </div>
-
-          <div className="mt-6">
-            <PlanPill />
-            <div className="mt-3"><CreditsMeta /></div>
-          </div>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex border-b border-white/10">
-          {(["chat", "console", "history"] as const).map((tab) => (
-            <button
-              key={tab}
-              onClick={() => setActiveTab(tab)}
-              className={`flex-1 py-4 text-sm font-medium border-b-2 transition-all ${activeTab === tab ? "text-white border-cyan-400" : "text-zinc-400 border-transparent hover:text-zinc-200"}`}
-            >
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
-            </button>
-          ))}
-        </div>
-
-        {/* Tab Content */}
-        {activeTab === "chat" && (
-          <ChatPanel
-            messages={messages}
-            chatInput={chatInput}
-            setChatInput={setChatInput}
-            isRunning={isRunning}
-            sendMessage={sendMessage}
-            messagesEndRef={messagesEndRef}
-          />
-        )}
-
-        {activeTab === "console" && (
-          <div className="flex-1 overflow-y-auto p-6 font-mono text-xs bg-black/80 text-emerald-300 space-y-4">
-            {buildLogs.length === 0 ? (
-              <div className="text-center py-20 text-zinc-500">Build logs appear here in real time</div>
-            ) : (
-              buildLogs.map((log, i) => (
-                <div key={i} className={`flex gap-4 ${log.type === "success" ? "text-emerald-400" : log.type === "error" ? "text-red-400" : ""}`}>
-                  <span className="shrink-0 w-20 text-zinc-600">[{log.timestamp}]</span>
-                  <span>{log.message}</span>
-                </div>
-              ))
-            )}
-          </div>
-        )}
-
-        {activeTab === "history" && (
-          <div className="flex-1 overflow-y-auto p-6">
-            <div className="text-xs uppercase tracking-widest text-zinc-500 mb-6">Version History</div>
-            {history.length === 0 ? (
-              <p className="text-zinc-500">Build your first site to see versions</p>
-            ) : (
-              history.map((v) => (
-                <button
-                  key={v.id}
-                  onClick={() => {
-                    setSnapshot(v.snapshot);
-                    const firstSlug = v.snapshot?.pages?.[0]?.slug ?? "index";
-                    setActivePageSlug(firstSlug);
-                    addLog(`Restored version ${v.version_no}`, "success");
-                  }}
-                  className="w-full text-left mb-4 bg-zinc-900 hover:bg-zinc-800 border border-white/10 rounded-3xl p-6 transition group"
-                >
-                  <div className="flex justify-between text-xs">
-                    <span className="text-white">Version {v.version_no}</span>
-                    <span className="text-zinc-500">{new Date(v.created_at).toLocaleDateString()}</span>
-                  </div>
-                  <div className="text-emerald-400 text-xs mt-3 group-hover:underline">Click to restore into preview</div>
-                </button>
-              ))
-            )}
-          </div>
-        )}
-      </aside>
-
-      {/* Preview Area */}
-      <div className="flex-1 flex flex-col">
-        <div className="h-14 border-b border-white/10 bg-zinc-900 flex items-center px-6 gap-2 overflow-x-auto">
-          {snapshot?.pages?.map((p: any) => (
-            <button
-              key={p.slug}
-              onClick={() => setActivePageSlug(p.slug)}
-              className={`px-6 py-2 text-sm rounded-2xl transition whitespace-nowrap ${activePageSlug === p.slug ? "bg-white text-black font-semibold" : "hover:bg-white/10"}`}
-            >
-              {p.title || (p.slug === "index" ? "Home" : p.slug.charAt(0).toUpperCase() + p.slug.slice(1))}
-            </button>
-          ))}
-          <div className="flex-1" />
-          <button
-            onClick={exportHTML}
-            disabled={!snapshot}
-            className="flex items-center gap-2 px-6 py-2 bg-white/5 hover:bg-white/10 rounded-2xl text-sm font-medium disabled:opacity-40 transition"
-          >
-            Export Full HTML
-          </button>
-        </div>
-
-        <SitePreview />
-      </div>
-    </div>
-  );
-
-  // ========================= Main Render =========================
   return (
     <div className={`${inter.variable} ${fira.variable} h-screen flex flex-col bg-zinc-950 text-zinc-200 overflow-hidden`}>
-      <TopNav />
+      <TopNav
+        view={view}
+        setView={setView}
+        user={user}
+        creditBalance={creditBalance}
+        userEmail={user?.email}
+        onSignOut={() => supabase.auth.signOut()}
+      />
+
       <main className="flex-1 flex overflow-hidden">
         {view === "landing" && (
-          <div className="flex-1 flex items-center justify-center bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:40px_40px]">
-            <div className="text-center max-w-3xl px-6">
-              <div className="mb-10 text-8xl">⬡</div>
-              <h1 className="text-7xl font-black tracking-[-3.8px] leading-none mb-6">
-                Prompt.<br />Build.<br />
-                <span className="bg-gradient-to-r from-cyan-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">Ship instantly.</span>
-              </h1>
-              <p className="text-2xl text-zinc-400 mb-10">Professional websites with navbar, rich sections, testimonials, pricing, FAQ &amp; footer — in seconds.</p>
-              <div className="flex flex-col sm:flex-row gap-4 justify-center">
-                <button onClick={() => (user ? setView("builder") : setView("auth"))} className="px-16 py-6 bg-white text-black rounded-3xl font-black text-2xl hover:scale-105 transition active:scale-95">
-                  Start building free
-                </button>
-                <button onClick={() => setView("pricing")} className="px-12 py-6 bg-white/5 hover:bg-white/10 border border-white/10 rounded-3xl font-bold text-xl transition">
-                  See pricing
-                </button>
+          <div className="flex-1 flex items-center justify-center bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:32px_32px]">
+            <div className="text-center max-w-3xl">
+              <div className="mb-8 inline-flex items-center gap-4">
+                <div className="text-8xl">⬡</div>
               </div>
+              <h1 className="text-7xl font-black tracking-[-3.5px] leading-[1.05] mb-6">
+                Prompt.<br />
+                Build.<br />
+                <span className="bg-gradient-to-r from-cyan-400 via-violet-400 to-fuchsia-400 bg-clip-text text-transparent">
+                  Ship professional sites.
+                </span>
+              </h1>
+              <p className="text-2xl text-zinc-400 mb-12">
+                Complete websites with navbar, rich sections, testimonials, pricing, FAQ &amp; footer — instantly.
+              </p>
+              <button
+                onClick={() => (user ? setView("builder") : setView("auth"))}
+                className="px-14 py-6 bg-white text-black rounded-3xl font-black text-2xl hover:scale-105 active:scale-95 transition"
+              >
+                Start building free
+              </button>
             </div>
           </div>
         )}
-        {view === "auth" && <AuthView />}
-        {view === "pricing" && <PricingView />}
-        {view === "builder" && <BuilderView />}
+
+        {view === "auth" && (
+          <div className="flex-1 flex items-center justify-center bg-zinc-950">
+            <div className="w-full max-w-md bg-zinc-900 border border-white/10 p-12 rounded-3xl">
+              <h2 className="text-3xl font-black mb-8">Welcome back</h2>
+              <input
+                type="email"
+                placeholder="you@company.com"
+                className="w-full mb-4 bg-zinc-950 border border-white/10 rounded-2xl p-5 focus:border-cyan-500 outline-none"
+                value={loginEmail}
+                onChange={(e) => setLoginEmail(e.target.value)}
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                className="w-full mb-8 bg-zinc-950 border border-white/10 rounded-2xl p-5 focus:border-cyan-500 outline-none"
+                value={loginPassword}
+                onChange={(e) => setLoginPassword(e.target.value)}
+              />
+              <button onClick={handleAuth} className="w-full py-5 bg-white text-black font-bold rounded-2xl hover:bg-zinc-100 transition">
+                Sign in
+              </button>
+            </div>
+          </div>
+        )}
+
+        {view === "builder" && (
+          <div className="flex h-full w-full">
+            {/* Left Sidebar */}
+            <aside className="w-96 border-r border-white/10 bg-zinc-950 flex flex-col">
+              <div className="flex border-b border-white/10">
+                {(["chat", "console", "history"] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    className={`flex-1 py-4 text-sm font-medium transition-all ${
+                      activeTab === tab ? "text-white border-b-2 border-cyan-500" : "text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
+                  </button>
+                ))}
+              </div>
+
+              {/* Chat Tab */}
+              {activeTab === "chat" && (
+                <>
+                  <div className="flex-1 overflow-y-auto p-6 space-y-7 bg-zinc-950">
+                    {messages.map((msg, i) => (
+                      <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
+                        <div
+                          className={`max-w-[85%] rounded-3xl px-6 py-4 text-[15px] leading-relaxed ${
+                            msg.role === "user" ? "bg-cyan-600 text-white" : "bg-zinc-900 border border-white/10"
+                          }`}
+                        >
+                          {msg.role === "assistant" && (
+                            <div className="uppercase text-[10px] tracking-[2px] text-cyan-400 mb-2 font-mono">
+                              BUILDLIO
+                            </div>
+                          )}
+                          {msg.content}
+                        </div>
+                      </div>
+                    ))}
+                    {isRunning && (
+                      <div className="flex justify-start">
+                        <div className="bg-zinc-900 border border-white/10 rounded-3xl px-6 py-4 flex items-center gap-3 text-sm text-zinc-400">
+                          <div className="flex gap-1.5">
+                            <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce" />
+                            <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce delay-150" />
+                            <div className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce delay-300" />
+                          </div>
+                          Building your site...
+                        </div>
+                      </div>
+                    )}
+                    <div ref={messagesEndRef} />
+                  </div>
+
+                  <div className="p-6 border-t border-white/10 bg-zinc-900">
+                    <div className="relative">
+                      <input
+                        ref={chatInputRef}
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && !isRunning && sendMessage()}
+                        placeholder="Describe your website or business..."
+                        className="w-full bg-zinc-950 border border-white/10 focus:border-cyan-500 rounded-3xl pl-7 pr-16 py-5 text-sm outline-none"
+                        disabled={isRunning}
+                      />
+                      <button
+                        onClick={sendMessage}
+                        disabled={isRunning || !chatInput.trim()}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 bg-gradient-to-br from-cyan-400 to-violet-500 w-11 h-11 rounded-2xl flex items-center justify-center disabled:opacity-40 hover:scale-110 transition"
+                      >
+                        ↑
+                      </button>
+                    </div>
+                    <p className="text-center text-[10px] text-zinc-500 mt-4">
+                      The AI will generate a complete professional site when ready
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {/* Console Tab */}
+              {activeTab === "console" && (
+                <div className="flex-1 overflow-y-auto p-6 font-mono text-xs bg-black/70 text-emerald-300 space-y-4">
+                  {buildLogs.length === 0 ? (
+                    <div className="text-center py-16 text-zinc-500">Build activity will appear here in real time...</div>
+                  ) : (
+                    buildLogs.map((log, i) => (
+                      <div
+                        key={i}
+                        className={`flex gap-4 ${
+                          log.type === "success" ? "text-emerald-400" : log.type === "error" ? "text-red-400" : "text-emerald-300"
+                        }`}
+                      >
+                        <span className="text-zinc-600 shrink-0 w-20">[{log.timestamp}]</span>
+                        <span>{log.message}</span>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+
+              {/* History Tab */}
+              {activeTab === "history" && (
+                <div className="flex-1 overflow-y-auto p-6">
+                  <div className="text-xs uppercase tracking-widest text-zinc-500 mb-6">Version History</div>
+                  {history.length === 0 ? (
+                    <p className="text-zinc-500">No versions yet. Build your first site!</p>
+                  ) : (
+                    history.map((v, i) => (
+                      <div key={i} className="mb-4 bg-zinc-900 rounded-3xl p-5 text-sm">
+                        <div className="flex justify-between text-xs">
+                          <span>Version {v.version_no}</span>
+                          <span className="text-zinc-500">{new Date(v.created_at).toLocaleDateString()}</span>
+                        </div>
+                        <div className="mt-2 text-emerald-400 text-xs">Ready to export</div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </aside>
+
+            {/* Preview Area */}
+            <div className="flex-1 flex flex-col">
+              <div className="h-14 border-b border-white/10 bg-zinc-900 flex items-center px-6 gap-2 overflow-x-auto">
+                {snapshot?.pages?.map((p: any) => (
+                  <button
+                    key={p.slug}
+                    onClick={() => setActivePageSlug(p.slug)}
+                    className={`px-6 py-2 text-sm rounded-2xl transition whitespace-nowrap ${
+                      activePageSlug === p.slug ? "bg-white text-black font-semibold" : "hover:bg-white/10"
+                    }`}
+                  >
+                    {p.title || (p.slug === "index" ? "Home" : p.slug.charAt(0).toUpperCase() + p.slug.slice(1))}
+                  </button>
+                ))}
+                <div className="flex-1" />
+                <button
+                  onClick={exportHTML}
+                  disabled={!snapshot}
+                  className="flex items-center gap-2 px-7 py-2.5 bg-white/5 hover:bg-white/10 rounded-2xl text-sm font-medium disabled:opacity-40 transition"
+                >
+                  Export Full HTML
+                </button>
+              </div>
+
+              <SitePreview />
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
