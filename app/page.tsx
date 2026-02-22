@@ -391,6 +391,7 @@ function BuildlioSplash({
     </div>
   );
 }
+
 /* -----------------------------
    Top Navigation
 -------------------------------- */
@@ -453,12 +454,14 @@ function TopNav({
    Main App
 -------------------------------- */
 export default function BuildlioApp() {
+  // ANCHOR:STATE
   const [view, setView] = useState<ViewState>("landing");
 
-  // splash control
+  // Splash control
   const [showSplash, setShowSplash] = useState(true);
   const [firstChoice, setFirstChoice] = useState<BuildChoice | null>(null);
 
+  // Supabase
   const supabase = useMemo(
     () => createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
     []
@@ -475,6 +478,7 @@ export default function BuildlioApp() {
   const [activePageSlug, setActivePageSlug] = useState("index");
   const [creditBalance, setCreditBalance] = useState(10);
 
+  // Chat
   const [chatInput, setChatInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -487,6 +491,7 @@ export default function BuildlioApp() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatInputRef = useRef<HTMLInputElement>(null);
 
+  // Console & Tabs
   const [activeTab, setActiveTab] = useState<Tab>("chat");
   const [buildLogs, setBuildLogs] = useState<LogEntry[]>([]);
 
@@ -501,29 +506,28 @@ export default function BuildlioApp() {
     ]);
   };
 
-  // Auth
+  // ANCHOR:AUTH
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) =>
       setUser(data?.user ? { email: data.user.email, id: data.user.id } : null)
     );
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) =>
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_, session) =>
       setUser(session?.user ? { email: session.user.email, id: session.user.id } : null)
     );
     return () => subscription.unsubscribe();
   }, [supabase]);
 
-  // When splash choice happens, route into the correct view
+  // Route after splash selection
   useEffect(() => {
     if (!showSplash && firstChoice) {
-      // If logged in -> go builder
-      // If not -> go auth (but we still seed the prompt so it’s ready)
       if (user) setView("builder");
       else setView("auth");
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showSplash, firstChoice, user]);
 
-  // history
+  // History load
   useEffect(() => {
     if (view === "builder" && projectId) fetchHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -534,7 +538,7 @@ export default function BuildlioApp() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // ✅ Focus lock (fixes “1 letter then click”)
+  // Focus stability (helps “1 letter at a time” behavior)
   useEffect(() => {
     if (view === "builder" && activeTab === "chat" && !isRunning) {
       const t = setTimeout(() => chatInputRef.current?.focus(), 0);
@@ -543,11 +547,7 @@ export default function BuildlioApp() {
   }, [view, activeTab, isRunning]);
 
   async function fetchHistory() {
-    const { data } = await supabase
-      .from("versions")
-      .select("*")
-      .eq("project_id", projectId)
-      .order("version_no", { ascending: false });
+    const { data } = await supabase.from("versions").select("*").eq("project_id", projectId).order("version_no", { ascending: false });
     if (data) setHistory(data);
   }
 
@@ -556,25 +556,24 @@ export default function BuildlioApp() {
     if (!error) setView("builder");
   }
 
-  // Auto-seed the first prompt based on the splash choice
   function seedPrompt(choice: BuildChoice) {
     const prompt =
       choice === "Website"
         ? "Build a premium, modern marketing website. Ask me 2–3 smart questions, then generate the full site with strong copy, clear sections, testimonials, pricing, FAQ, and a bold CTA."
         : choice === "Application"
-        ? "Design a web application UI. Ask what the app does, who it’s for, and the key pages. Then generate a professional app-style site with a clear navigation, feature highlights, pricing, FAQ, and a product-led story."
+        ? "Design a web application experience. Ask what the app does, who it’s for, and the key pages. Then generate a professional product-led site with navigation, feature highlights, pricing, FAQ, and a clear story."
         : choice === "Documents"
-        ? "Help me create professional business documents. Ask what industry and purpose (contract/policy/proposal). Then generate a clean site that presents documents, trust signals, and a contact/CTA section."
+        ? "Help me create professional documents. Ask what industry and purpose (contract/policy/proposal). Then generate a clean site that presents the documents, trust signals, FAQs, and a CTA."
         : choice === "Store"
-        ? "Build an ecommerce-style landing experience. Ask what products, price range, and audience. Then generate a modern store landing with product highlights, social proof, and clear CTA."
+        ? "Build an ecommerce-style landing experience. Ask what products, price range, and audience. Then generate a modern store landing with product highlights, social proof, pricing, FAQ, and CTA."
         : choice === "Landing Page"
-        ? "Create a single high-converting landing page. Ask the offer, audience, and goal. Then generate a persuasive landing page with strong headline, benefits, proof, pricing, and CTA."
+        ? "Create a single high-converting landing page. Ask the offer, audience, and goal. Then generate persuasive copy with benefits, proof, pricing, FAQ, and CTA."
         : "Ask me what I’m building, then generate a premium site with WOW-level copy and structure.";
 
-    // Put it into the chat input (and optionally show as first user message)
     setChatInput(prompt);
   }
 
+  // ANCHOR:EXPORT
   function exportHTML() {
     if (!snapshot) return;
     const currentPage = snapshot.pages?.find((p: any) => p.slug === activePageSlug) || snapshot.pages?.[0];
@@ -597,7 +596,6 @@ export default function BuildlioApp() {
 </head>
 <body class="bg-zinc-50 text-zinc-900">
 
-  <!-- Navbar -->
   <nav class="bg-white border-b sticky top-0 z-50 shadow-sm">
     <div class="max-w-7xl mx-auto px-8 h-20 flex items-center justify-between">
       <div class="flex items-center gap-3">
@@ -611,7 +609,6 @@ export default function BuildlioApp() {
     </div>
   </nav>
 
-  <!-- Page Content -->
   <main>
     ${(currentPage.blocks || [])
       .map((block: any) => {
@@ -735,7 +732,6 @@ export default function BuildlioApp() {
       .join("")}
   </main>
 
-  <!-- Footer -->
   <footer class="bg-zinc-950 text-zinc-400 py-20">
     <div class="max-w-7xl mx-auto px-8 grid grid-cols-2 md:grid-cols-4 gap-10">
       <div>
@@ -769,6 +765,7 @@ export default function BuildlioApp() {
     URL.revokeObjectURL(url);
   }
 
+  // ANCHOR:SEND
   async function sendMessage() {
     if (!chatInput.trim() || isRunning) return;
 
@@ -806,7 +803,6 @@ export default function BuildlioApp() {
           .single();
 
         if (projError || !proj?.id) throw new Error(projError?.message || "Could not create project.");
-
         currentPid = proj.id;
         setProjectId(currentPid);
       }
@@ -1057,8 +1053,9 @@ export default function BuildlioApp() {
 
   return (
     <div className={`${inter.variable} ${fira.variable} h-screen flex flex-col bg-zinc-950 text-zinc-200 overflow-hidden`}>
+      {/* Splash sits ABOVE everything; it’s pure white until it starts */}
       {showSplash && (
-        <SplashSploosh
+        <BuildlioSplash
           onSelect={(choice) => {
             setFirstChoice(choice);
             seedPrompt(choice);
@@ -1111,7 +1108,6 @@ export default function BuildlioApp() {
                 <div className="mb-6 rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-sm text-zinc-300">
                   <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-400 mb-1">Selected</div>
                   <div className="font-semibold">{firstChoice}</div>
-                  <div className="text-zinc-400 text-xs mt-1">Sign in to start building.</div>
                 </div>
               )}
 
@@ -1141,6 +1137,7 @@ export default function BuildlioApp() {
 
         {view === "builder" && (
           <div className="flex h-full w-full">
+            {/* Left Sidebar */}
             <aside className="w-96 border-r border-white/10 bg-zinc-950 flex flex-col">
               <div className="flex border-b border-white/10">
                 {(["chat", "console", "history"] as const).map((tab) => (
@@ -1156,6 +1153,7 @@ export default function BuildlioApp() {
                 ))}
               </div>
 
+              {/* Chat Tab */}
               {activeTab === "chat" && (
                 <>
                   <div className="flex-1 overflow-y-auto p-6 space-y-7 bg-zinc-950">
@@ -1210,13 +1208,12 @@ export default function BuildlioApp() {
                         ↑
                       </button>
                     </div>
-                    <p className="text-center text-[10px] text-zinc-500 mt-4">
-                      The AI will generate a complete professional site when ready
-                    </p>
+                    <p className="text-center text-[10px] text-zinc-500 mt-4">The AI will generate a complete professional site when ready</p>
                   </div>
                 </>
               )}
 
+              {/* Console Tab */}
               {activeTab === "console" && (
                 <div className="flex-1 overflow-y-auto p-6 font-mono text-xs bg-black/70 text-emerald-300 space-y-4">
                   {buildLogs.length === 0 ? (
@@ -1241,6 +1238,7 @@ export default function BuildlioApp() {
                 </div>
               )}
 
+              {/* History Tab */}
               {activeTab === "history" && (
                 <div className="flex-1 overflow-y-auto p-6">
                   <div className="text-xs uppercase tracking-widest text-zinc-500 mb-6">Version History</div>
@@ -1261,6 +1259,7 @@ export default function BuildlioApp() {
               )}
             </aside>
 
+            {/* Preview Area */}
             <div className="flex-1 flex flex-col">
               <div className="h-14 border-b border-white/10 bg-zinc-900 flex items-center px-6 gap-2 overflow-x-auto">
                 {snapshot?.pages?.map((p: any) => (
