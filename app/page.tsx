@@ -1,16 +1,16 @@
 /* FILE: app/page.tsx
-BUILDLIO.SITE — v5.5: Slow Intro + White “In-Touch Assistant” Experience
+BUILDLIO.SITE — v5.5: Slow White “Buildio” Splash + Light Theme + Document vs Website Rendering + Correct Export
 
 CHANGELOG
 - v5.5
-  * FIX: Splash/intro slowed down (readable) + calmer transitions
-  * NEW: “Skip intro” + “Reduce motion” toggle (persists)
-  * NEW: Intro speed slider (persists) — defaults slower
-  * NEW: White, assistant-first builder UI (chat is the primary surface)
-  * KEEP: Documents render DocumentPreview + Export Document HTML
-  * KEEP: Websites render SitePreview + Export Full HTML
-  * KEEP: Tabs (Chat/Console/History), history, credits badge, buildType wiring
-  * KEEP: Input stability (memoized preview)
+  * FIX: Splash is SOLID WHITE, slower, calmer pacing (no skip intro)
+  * NEW: “Buildio” voice: short lines + real pauses before choices appear
+  * NEW: Choices appear ONLY after intro finishes (buoy pop animation)
+  * FIX: App theme is consistent (light) — no white → black whiplash
+  * KEEP: Documents build renders document preview + Export Document (HTML)
+  * KEEP: Website/store/landing/application/other render website preview + Export Full HTML
+  * KEEP: Splash choice -> buildType wiring, history, credits badge, input stability
+  * KEEP: Memoized preview
 
 ANCHOR:CONFIG
 - Requires NEXT_PUBLIC_SUPABASE_URL + NEXT_PUBLIC_SUPABASE_ANON_KEY
@@ -75,7 +75,9 @@ type AnySnapshot = SiteSnapshot | DocSnapshot;
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
-
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
 function choiceToBuildType(choice: BuildChoice): BuildType {
   if (choice === "Website") return "website";
   if (choice === "Application") return "application";
@@ -92,124 +94,116 @@ function isSiteSnapshot(s: AnySnapshot | null): s is SiteSnapshot {
 }
 
 /* ------------------------------------------------
-ANCHOR:SPLASH — slowed + skip + reduce motion + speed control
+ANCHOR:SPLASH — Slow, Solid White, Calm, No Skip
 --------------------------------------------------- */
-function BuildlioSplash({
-  onSelect,
-  introSpeed,
-  setIntroSpeed,
-  reduceMotion,
-  setReduceMotion,
-  onSkip,
-}: {
-  onSelect: (choice: BuildChoice) => void;
-  introSpeed: number; // 1.0 = normal, >1 slower
-  setIntroSpeed: (n: number) => void;
-  reduceMotion: boolean;
-  setReduceMotion: (b: boolean) => void;
-  onSkip: () => void;
-}) {
+function BuildioSplash({ onSelect }: { onSelect: (choice: BuildChoice) => void }) {
   const choices: Array<{ label: BuildChoice; desc: string }> = [
     { label: "Website", desc: "A full professional website with pages, sections, and polish." },
     { label: "Application", desc: "A product-style build with screens, flow, and structure." },
     { label: "Documents", desc: "Letters, contracts, policies — clean and professional." },
-    { label: "Store", desc: "A conversion-focused product landing experience." },
+    { label: "Store", desc: "A conversion-focused product & checkout experience." },
     { label: "Landing Page", desc: "One high-performing page for an offer or campaign." },
     { label: "Other", desc: "Anything else — you describe it, I’ll shape it." },
   ];
 
-  const [phase, setPhase] = useState<0 | 1 | 2 | 3 | 4 | 5>(0);
+  // phases:
+  // 0: white
+  // 1: first ripple begins
+  // 2: line1 typing
+  // 3: pause
+  // 4: line2 typing
+  // 5: pause
+  // 6: line3 typing
+  // 7: pause
+  // 8: reveal choices
+  // 9: exiting (sploosh sink)
+  const [phase, setPhase] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>(0);
 
-  const line1Full =
-    "Hi! I’m Buildlio — your AI chat builder. Let’s turn your dream into a reality. What are we creating today?";
-  const line2Full = "I’ll guide you step-by-step.";
+  const line1 = "Hi, I’m Buildio.";
+  const line2 = "Your AI chat builder.";
+  const line3 = "Let’s turn your dream into a reality. What are we creating today?";
 
   const [typed1, setTyped1] = useState("");
   const [typed2, setTyped2] = useState("");
+  const [typed3, setTyped3] = useState("");
+
   const [cornerRippleOn, setCornerRippleOn] = useState(false);
   const [isExiting, setIsExiting] = useState(false);
   const [sinkKey, setSinkKey] = useState<string | null>(null);
 
   const rootRef = useRef<HTMLDivElement>(null);
-  const origin = useMemo(() => ({ x: 92, y: 16 }), []);
+
+  // top-right-ish origin
+  const origin = useMemo(() => ({ x: 92, y: 14 }), []);
   const [sploosh, setSploosh] = useState<{ x: number; y: number; active: boolean }>({
     x: origin.x,
     y: origin.y,
     active: false,
   });
 
-  const sleep = (ms: number) => new Promise((r) => setTimeout(r, Math.round(ms * introSpeed)));
+  // slower typing tuned to feel “human” and not frantic
+  async function typeLine(setter: (s: string) => void, full: string, msPerChar: number) {
+    for (let i = 1; i <= full.length; i++) {
+      setter(full.slice(0, i));
+      await sleep(msPerChar);
+    }
+  }
 
   useEffect(() => {
     let alive = true;
 
-    // If user wants reduced motion, jump straight to choices.
-    if (reduceMotion) {
-      setPhase(4);
-      setTyped1(line1Full);
-      setTyped2(line2Full);
-      return () => {
-        alive = false;
-      };
-    }
-
     (async () => {
-      await sleep(900);
-      if (!alive) return;
-
-      setPhase(1);
-      setCornerRippleOn(true);
-
-      await sleep(900);
-      if (!alive) return;
-
-      setPhase(2);
-
-      const hi = "Hi!";
-      for (let i = 1; i <= hi.length; i++) {
-        if (!alive) return;
-        setTyped1(hi.slice(0, i));
-        await sleep(80);
-      }
-
+      // SOLID WHITE HOLD
       await sleep(700);
       if (!alive) return;
 
-      const rest = line1Full.slice(hi.length);
-      for (let i = 1; i <= rest.length; i++) {
-        if (!alive) return;
-        setTyped1(hi + rest.slice(0, i));
-        await sleep(55);
-      }
-
-      await sleep(650);
+      // Ripple begins — first attention grab
+      setPhase(1);
+      setCornerRippleOn(true);
+      await sleep(900);
       if (!alive) return;
 
+      // Type line 1
+      setPhase(2);
+      await typeLine(setTyped1, line1, 42);
+      if (!alive) return;
+
+      // Pause
       setPhase(3);
-      for (let i = 1; i <= line2Full.length; i++) {
-        if (!alive) return;
-        setTyped2(line2Full.slice(0, i));
-        await sleep(48);
-      }
-
-      await sleep(520);
+      await sleep(950);
       if (!alive) return;
 
+      // Type line 2
       setPhase(4);
+      await typeLine(setTyped2, line2, 40);
+      if (!alive) return;
+
+      // Pause
+      setPhase(5);
+      await sleep(1100);
+      if (!alive) return;
+
+      // Type line 3 (slightly faster but still calm)
+      setPhase(6);
+      await typeLine(setTyped3, line3, 28);
+      if (!alive) return;
+
+      // Pause BEFORE choices appear (your “not so fast”)
+      setPhase(7);
+      await sleep(1400);
+      if (!alive) return;
+
+      // Reveal choices
+      setPhase(8);
     })();
 
     return () => {
       alive = false;
     };
-  }, [line1Full, line2Full, introSpeed, reduceMotion]);
+  }, []);
 
   const handleChoiceClick = async (choice: BuildChoice, ev: React.MouseEvent<HTMLButtonElement>) => {
-    if (isExiting) return;
-
-    if (reduceMotion) {
-      onSelect(choice);
-      return;
-    }
+    if (isExiting || phase < 8) return;
 
     const rect = rootRef.current?.getBoundingClientRect();
     const cx = rect ? ((ev.clientX - rect.left) / rect.width) * 100 : origin.x;
@@ -218,10 +212,11 @@ function BuildlioSplash({
     setSinkKey(choice);
     setSploosh({ x: clamp(cx, 6, 94), y: clamp(cy, 6, 94), active: true });
 
-    setPhase(5);
+    setPhase(9);
     setIsExiting(true);
 
-    await sleep(1000);
+    // linger just a touch so it feels intentional
+    await sleep(880);
     onSelect(choice);
   };
 
@@ -231,7 +226,8 @@ function BuildlioSplash({
       className="fixed inset-0 z-[9999] bg-white text-zinc-900 overflow-hidden"
       style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
     >
-      {cornerRippleOn && !reduceMotion && (
+      {/* Ripple field (corner) */}
+      {cornerRippleOn && (
         <div
           className="absolute inset-0 pointer-events-none"
           style={
@@ -247,7 +243,8 @@ function BuildlioSplash({
         </div>
       )}
 
-      {sploosh.active && !reduceMotion && (
+      {/* Click sploosh */}
+      {sploosh.active && (
         <div
           className="absolute inset-0 pointer-events-none"
           style={
@@ -264,71 +261,39 @@ function BuildlioSplash({
         </div>
       )}
 
-      {/* Top-right controls: keep it simple + respectful */}
-      <div className="absolute top-5 right-5 z-20 flex items-center gap-3">
-        <button
-          onClick={onSkip}
-          className="px-4 py-2 rounded-2xl border border-zinc-200 bg-white hover:bg-zinc-50 text-sm font-semibold"
-        >
-          Skip intro
-        </button>
-
-        <label className="flex items-center gap-2 text-xs text-zinc-700 rounded-2xl border border-zinc-200 bg-white px-3 py-2">
-          <input
-            type="checkbox"
-            checked={reduceMotion}
-            onChange={(e) => setReduceMotion(e.target.checked)}
-            className="accent-zinc-900"
-          />
-          Reduce motion
-        </label>
-      </div>
-
       <div className="relative h-full w-full flex items-center justify-center px-6">
         <div className="w-full max-w-5xl">
-          <div className="min-h-[170px]">
+          {/* Text block */}
+          <div className="min-h-[220px]">
             {phase >= 2 && (
               <div className="text-zinc-900">
                 <div className="text-4xl md:text-5xl font-black tracking-[-0.045em] leading-[1.08]">
                   {typed1}
-                  <span className={`caret ${phase < 4 ? "caret-on" : "caret-off"}`} />
+                  <span className={`caret ${phase < 3 ? "caret-on" : "caret-off"}`} />
                 </div>
 
-                {phase >= 3 && (
-                  <div className="mt-6 text-xl md:text-2xl font-semibold text-zinc-600 tracking-[-0.01em]">
+                {phase >= 4 && (
+                  <div className="mt-8 text-2xl md:text-3xl font-semibold text-zinc-700 tracking-[-0.02em]">
                     {typed2}
+                    <span className={`caret ${phase >= 4 && phase < 5 ? "caret-on" : "caret-off"}`} />
+                  </div>
+                )}
+
+                {phase >= 6 && (
+                  <div className="mt-10 text-xl md:text-2xl font-medium text-zinc-600 leading-relaxed max-w-3xl">
+                    {typed3}
+                    <span className={`caret ${phase >= 6 && phase < 8 ? "caret-on" : "caret-off"}`} />
                   </div>
                 )}
               </div>
             )}
           </div>
 
-          {/* Speed control (only matters if not reduced motion) */}
-          {phase >= 2 && (
-            <div className="mt-8 flex flex-col sm:flex-row sm:items-center gap-4">
-              <div className="text-xs text-zinc-600">
-                Intro speed: <span className="font-mono text-zinc-900">{introSpeed.toFixed(1)}x slower</span>
-              </div>
-              <input
-                type="range"
-                min={1}
-                max={3}
-                step={0.1}
-                value={introSpeed}
-                onChange={(e) => setIntroSpeed(parseFloat(e.target.value))}
-                className="w-full sm:w-64"
-                disabled={reduceMotion}
-              />
-              <div className="text-[11px] text-zinc-500">
-                (Tip: set “Reduce motion” to skip animations entirely.)
-              </div>
-            </div>
-          )}
-
-          {phase >= 4 && (
+          {/* Choices appear only after intro completes */}
+          {phase >= 8 && (
             <div
-              className={`mt-10 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 ${
-                isExiting ? "choices-exiting" : "choices-enter"
+              className={`mt-14 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 ${
+                isExiting ? "choices-exiting" : "choices-buoy"
               }`}
             >
               {choices.map((c, idx) => {
@@ -347,7 +312,7 @@ function BuildlioSplash({
                   >
                     <div className="flex items-center justify-between gap-4">
                       <div className="text-lg font-extrabold tracking-[-0.02em]">{c.label}</div>
-                      <div className="w-10 h-10 rounded-2xl bg-zinc-100 flex items-center justify-center text-zinc-700 font-black">
+                      <div className="w-10 h-10 rounded-2xl bg-zinc-100 flex items-center justify-center text-zinc-800 font-black">
                         →
                       </div>
                     </div>
@@ -369,8 +334,8 @@ function BuildlioSplash({
         }
         .caret-on {
           height: 0.95em;
-          border-right: 3px solid rgba(0, 0, 0, 0.45);
-          animation: blink 1.2s step-end infinite;
+          border-right: 3px solid rgba(0, 0, 0, 0.35);
+          animation: blink 0.95s step-end infinite;
         }
         .caret-off {
           border-right: 3px solid transparent;
@@ -387,21 +352,23 @@ function BuildlioSplash({
           }
         }
 
+        /* Corner ripple: wavy attention grab on a white page */
         .corner-ripple {
           position: absolute;
           left: var(--cx);
           top: var(--cy);
           transform: translate(-50%, -50%);
           border-radius: 999px;
-          border: 2px solid rgba(0, 0, 0, 0.07);
+          border: 2px solid rgba(0, 0, 0, 0.06);
           opacity: 0;
           width: 18px;
           height: 18px;
-          animation: corner 2.2s ease-out infinite;
+          animation: corner 1.85s ease-out infinite;
+          filter: blur(0.1px);
         }
         .corner-ripple-2 {
           animation-delay: 0.32s;
-          border-color: rgba(0, 0, 0, 0.055);
+          border-color: rgba(0, 0, 0, 0.05);
         }
         .corner-ripple-3 {
           animation-delay: 0.64s;
@@ -412,24 +379,36 @@ function BuildlioSplash({
             transform: translate(-50%, -50%) scale(0.35);
             opacity: 0;
           }
-          16% {
-            opacity: 0.6;
+          18% {
+            opacity: 0.68;
           }
           100% {
-            transform: translate(-50%, -50%) scale(10.5);
+            transform: translate(-50%, -50%) scale(12.5);
             opacity: 0;
           }
         }
 
-        .choices-enter .choice-card {
+        /* Buoy pop: rise + slight bob */
+        .choices-buoy .choice-card {
           opacity: 0;
-          transform: translateY(18px);
-          animation: floatUp 820ms cubic-bezier(0.2, 0.9, 0.2, 1) forwards;
+          transform: translateY(26px) scale(0.985);
+          animation: buoyPop 980ms cubic-bezier(0.18, 0.92, 0.2, 1) forwards;
         }
-        @keyframes floatUp {
-          to {
+        @keyframes buoyPop {
+          0% {
+            opacity: 0;
+            transform: translateY(34px) scale(0.98);
+          }
+          60% {
             opacity: 1;
-            transform: translateY(0);
+            transform: translateY(-6px) scale(1);
+          }
+          78% {
+            transform: translateY(2px) scale(1);
+          }
+          100% {
+            opacity: 1;
+            transform: translateY(0) scale(1);
           }
         }
 
@@ -437,19 +416,19 @@ function BuildlioSplash({
           animation-delay: 0ms;
         }
         .delay-1 {
-          animation-delay: 120ms;
+          animation-delay: 140ms;
         }
         .delay-2 {
-          animation-delay: 240ms;
+          animation-delay: 280ms;
         }
         .delay-3 {
-          animation-delay: 360ms;
+          animation-delay: 420ms;
         }
         .delay-4 {
-          animation-delay: 480ms;
+          animation-delay: 560ms;
         }
         .delay-5 {
-          animation-delay: 600ms;
+          animation-delay: 700ms;
         }
 
         .choice-card {
@@ -457,31 +436,31 @@ function BuildlioSplash({
           text-align: left;
           padding: 22px;
           border-radius: 28px;
-          border: 1px solid rgba(0, 0, 0, 0.12);
+          border: 1px solid rgba(0, 0, 0, 0.10);
           background: #fff;
           transition: transform 260ms ease, box-shadow 260ms ease, opacity 260ms ease;
-          box-shadow: 0 10px 24px rgba(0, 0, 0, 0.06);
+          box-shadow: 0 14px 34px rgba(0, 0, 0, 0.07);
         }
         .choice-card:hover {
           transform: translateY(-2px);
-          box-shadow: 0 14px 34px rgba(0, 0, 0, 0.085);
+          box-shadow: 0 18px 44px rgba(0, 0, 0, 0.085);
         }
         .choice-card:active {
           transform: translateY(1px);
         }
 
         .choice-sink {
-          transform: translateY(12px) scale(0.985) !important;
-          box-shadow: 0 6px 18px rgba(0, 0, 0, 0.05) !important;
+          transform: translateY(14px) scale(0.985) !important;
+          box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06) !important;
         }
         .choice-sink::after {
           content: "";
           position: absolute;
           inset: -2px;
           border-radius: 30px;
-          border: 2px solid rgba(0, 0, 0, 0.1);
+          border: 2px solid rgba(0, 0, 0, 0.09);
           opacity: 0;
-          animation: sinkOutline 820ms ease-out forwards;
+          animation: sinkOutline 720ms ease-out forwards;
           pointer-events: none;
         }
         @keyframes sinkOutline {
@@ -490,11 +469,11 @@ function BuildlioSplash({
             transform: scale(1);
           }
           18% {
-            opacity: 0.55;
+            opacity: 0.6;
           }
           100% {
             opacity: 0;
-            transform: scale(1.12);
+            transform: scale(1.14);
           }
         }
 
@@ -508,27 +487,27 @@ function BuildlioSplash({
         }
         .choice-sink .card-ripples {
           opacity: 1;
-          background: radial-gradient(circle at 50% 65%, rgba(0, 0, 0, 0.1), rgba(255, 255, 255, 0) 58%),
+          background: radial-gradient(circle at 50% 65%, rgba(0, 0, 0, 0.10), rgba(255, 255, 255, 0) 58%),
             radial-gradient(circle at 50% 65%, rgba(0, 0, 0, 0.07), rgba(255, 255, 255, 0) 62%);
-          animation: cardRipple 820ms ease-out forwards;
+          animation: cardRipple 720ms ease-out forwards;
         }
         @keyframes cardRipple {
           0% {
-            transform: translateY(0) scale(0.88);
-            opacity: 0.2;
+            transform: translateY(0) scale(0.90);
+            opacity: 0.22;
           }
           35% {
-            opacity: 0.3;
+            opacity: 0.32;
           }
           100% {
-            transform: translateY(8px) scale(1.26);
+            transform: translateY(10px) scale(1.28);
             opacity: 0;
           }
         }
 
         .choice-fade {
           opacity: 0.35 !important;
-          transform: translateY(8px) scale(0.99) !important;
+          transform: translateY(10px) scale(0.99) !important;
         }
 
         .sploosh-ring {
@@ -539,16 +518,16 @@ function BuildlioSplash({
           height: 12px;
           transform: translate(-50%, -50%) scale(0.2);
           border-radius: 999px;
-          border: 2px solid rgba(0, 0, 0, 0.11);
+          border: 2px solid rgba(0, 0, 0, 0.10);
           opacity: 0;
-          animation: ring 1000ms ease-out forwards;
+          animation: ring 880ms ease-out forwards;
         }
         .sploosh-ring-2 {
-          animation-delay: 160ms;
-          border-color: rgba(0, 0, 0, 0.085);
+          animation-delay: 130ms;
+          border-color: rgba(0, 0, 0, 0.08);
         }
         .sploosh-ring-3 {
-          animation-delay: 320ms;
+          animation-delay: 240ms;
           border-color: rgba(0, 0, 0, 0.06);
         }
         @keyframes ring {
@@ -557,10 +536,10 @@ function BuildlioSplash({
             opacity: 0;
           }
           12% {
-            opacity: 0.55;
+            opacity: 0.6;
           }
           100% {
-            transform: translate(-50%, -50%) scale(86);
+            transform: translate(-50%, -50%) scale(92);
             opacity: 0;
           }
         }
@@ -571,9 +550,9 @@ function BuildlioSplash({
             circle at var(--sx) var(--sy),
             rgba(0, 0, 0, 0.06),
             rgba(0, 0, 0, 0.02) 18%,
-            rgba(255, 255, 255, 0) 48%
+            rgba(255, 255, 255, 0) 50%
           );
-          animation: wash 1000ms ease-out forwards;
+          animation: wash 880ms ease-out forwards;
           opacity: 0;
         }
         @keyframes wash {
@@ -593,7 +572,7 @@ function BuildlioSplash({
 }
 
 /* -----------------------------
-Top Navigation — now LIGHT
+Top Navigation (light, consistent)
 -------------------------------- */
 function TopNav({
   view,
@@ -638,7 +617,7 @@ function TopNav({
       <div className="flex items-center gap-4">
         {user ? (
           <>
-            <div className="px-4 py-1 rounded-full bg-gradient-to-r from-cyan-500/10 to-violet-500/10 border border-cyan-500/20 text-cyan-800 text-xs font-mono tracking-widest">
+            <div className="px-4 py-1 rounded-full bg-gradient-to-r from-cyan-500/10 to-violet-500/10 border border-cyan-500/20 text-cyan-700 text-xs font-mono tracking-widest">
               {creditBalance} CR
             </div>
             <span className="text-xs text-zinc-500 hidden md:block">{userEmail}</span>
@@ -657,7 +636,7 @@ function TopNav({
 }
 
 /* -----------------------------
-Memoized Website Preview (unchanged behavior)
+Memoized Website Preview (light chrome)
 -------------------------------- */
 const SitePreview = memo(function SitePreview({
   snapshot,
@@ -672,14 +651,14 @@ const SitePreview = memo(function SitePreview({
   const tagline = snapshot?.tagline || "";
 
   return (
-    <div className="flex-1 bg-zinc-950 flex flex-col relative overflow-hidden">
-      <div className="h-11 bg-zinc-900 flex items-center px-4 border-b border-zinc-800">
+    <div className="flex-1 bg-zinc-100 flex flex-col relative overflow-hidden">
+      <div className="h-11 bg-white flex items-center px-4 border-b border-zinc-200">
         <div className="flex gap-1.5">
           <div className="w-3 h-3 bg-red-500 rounded-full" />
           <div className="w-3 h-3 bg-yellow-500 rounded-full" />
           <div className="w-3 h-3 bg-green-500 rounded-full" />
         </div>
-        <div className="mx-auto bg-zinc-800 text-zinc-400 text-[10px] px-12 py-px rounded-full font-mono">
+        <div className="mx-auto bg-zinc-100 text-zinc-600 text-[10px] px-12 py-px rounded-full font-mono border border-zinc-200">
           https://{String(siteName).toLowerCase().replace(/\s+/g, "")}.com
         </div>
       </div>
@@ -693,7 +672,7 @@ const SitePreview = memo(function SitePreview({
             </div>
             <div className="flex items-center gap-9 text-sm font-medium text-zinc-700">
               {navItems.map((item, i) => (
-                <a key={i} href="#" className="hover:text-cyan-600 transition-colors">
+                <a key={i} href="#" className="hover:text-cyan-700 transition-colors">
                   {item}
                 </a>
               ))}
@@ -719,7 +698,7 @@ const SitePreview = memo(function SitePreview({
                       <h1 className="text-7xl md:text-[5.5rem] font-black tracking-[-3px] leading-none mb-8">
                         {block.headline}
                       </h1>
-                      <p className="text-2xl text-zinc-400 max-w-3xl mx-auto">{block.subhead}</p>
+                      <p className="text-2xl text-zinc-300 max-w-3xl mx-auto">{block.subhead}</p>
                       {block.cta && (
                         <button className="mt-12 bg-white text-black px-14 py-4 rounded-3xl font-bold text-xl hover:scale-105 transition">
                           {block.cta.label}
@@ -736,7 +715,7 @@ const SitePreview = memo(function SitePreview({
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                         {block.items?.map((item: any, j: number) => (
                           <div key={j} className="group bg-zinc-50 hover:bg-white border p-10 rounded-3xl transition-all">
-                            <h3 className="text-2xl font-semibold mb-4 group-hover:text-cyan-600 transition">{item.title}</h3>
+                            <h3 className="text-2xl font-semibold mb-4 group-hover:text-cyan-700 transition">{item.title}</h3>
                             <p className="text-zinc-600 leading-relaxed">{item.description}</p>
                           </div>
                         ))}
@@ -750,7 +729,7 @@ const SitePreview = memo(function SitePreview({
                     <div className="max-w-6xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-12 text-center">
                       {block.stats?.map((s: any, j: number) => (
                         <div key={j}>
-                          <div className="text-7xl font-black text-cyan-600 tracking-tighter">{s.value}</div>
+                          <div className="text-7xl font-black text-cyan-700 tracking-tighter">{s.value}</div>
                           <div className="mt-3 font-medium text-zinc-600">{s.label}</div>
                         </div>
                       ))}
@@ -803,7 +782,7 @@ const SitePreview = memo(function SitePreview({
                             <ul className="mt-12 space-y-4 text-sm">
                               {plan.features?.map((f: string, k: number) => (
                                 <li key={k} className="flex items-start gap-3">
-                                  <span className="text-emerald-500 mt-0.5">✔</span> {f}
+                                  <span className="text-emerald-600 mt-0.5">✔</span> {f}
                                 </li>
                               ))}
                             </ul>
@@ -844,7 +823,7 @@ const SitePreview = memo(function SitePreview({
                 )}
 
                 {block.type === "cta" && (
-                  <section className="py-28 bg-gradient-to-br from-cyan-600 via-violet-600 to-fuchsia-600 text-white text-center">
+                  <section className="py-28 bg-gradient-to-br from-cyan-700 via-violet-700 to-fuchsia-700 text-white text-center">
                     <div className="max-w-3xl mx-auto px-6">
                       <h2 className="text-5xl font-black tracking-tight">{block.headline}</h2>
                       <p className="mt-6 text-xl text-white/90">{block.subhead}</p>
@@ -885,7 +864,7 @@ const SitePreview = memo(function SitePreview({
                   </div>
                 </div>
               </div>
-              <div className="text-center text-xs mt-16 opacity-60">© {new Date().getFullYear()} — Instant professional websites by Buildlio</div>
+              <div className="text-center text-xs mt-16 opacity-60">© {new Date().getFullYear()} — Instant professional output by Buildlio</div>
             </footer>
           </div>
         )}
@@ -895,7 +874,7 @@ const SitePreview = memo(function SitePreview({
 });
 
 /* -----------------------------
-ANCHOR:DOCUMENT_PREVIEW
+ANCHOR:DOCUMENT_PREVIEW (light chrome)
 -------------------------------- */
 const DocumentPreview = memo(function DocumentPreview({
   snapshot,
@@ -910,14 +889,14 @@ const DocumentPreview = memo(function DocumentPreview({
   const active = docs.find((d) => d.id === activeDocId) || docs[0];
 
   return (
-    <div className="flex-1 bg-zinc-950 flex flex-col relative overflow-hidden">
-      <div className="h-11 bg-zinc-900 flex items-center px-4 border-b border-zinc-800">
+    <div className="flex-1 bg-zinc-100 flex flex-col relative overflow-hidden">
+      <div className="h-11 bg-white flex items-center px-4 border-b border-zinc-200">
         <div className="flex gap-1.5">
           <div className="w-3 h-3 bg-red-500 rounded-full" />
           <div className="w-3 h-3 bg-yellow-500 rounded-full" />
           <div className="w-3 h-3 bg-green-500 rounded-full" />
         </div>
-        <div className="mx-auto bg-zinc-800 text-zinc-400 text-[10px] px-10 py-px rounded-full font-mono">
+        <div className="mx-auto bg-zinc-100 text-zinc-600 text-[10px] px-10 py-px rounded-full font-mono border border-zinc-200">
           Document Preview • Print-ready HTML
         </div>
       </div>
@@ -931,13 +910,16 @@ const DocumentPreview = memo(function DocumentPreview({
         </div>
       ) : (
         <div className="flex-1 overflow-hidden bg-zinc-200">
-          <div className="h-14 bg-zinc-900 border-b border-white/10 flex items-center px-6 gap-2 overflow-x-auto">
+          {/* Doc tabs */}
+          <div className="h-14 bg-white border-b border-zinc-200 flex items-center px-6 gap-2 overflow-x-auto">
             {docs.map((d) => (
               <button
                 key={d.id}
                 onClick={() => onSelectDoc(d.id)}
-                className={`px-5 py-2 text-sm rounded-2xl transition whitespace-nowrap ${
-                  active?.id === d.id ? "bg-white text-black font-semibold" : "hover:bg-white/10 text-zinc-200"
+                className={`px-5 py-2 text-sm rounded-2xl transition whitespace-nowrap border ${
+                  active?.id === d.id
+                    ? "bg-zinc-900 text-white border-zinc-900 font-semibold"
+                    : "bg-white hover:bg-zinc-50 text-zinc-700 border-zinc-200"
                 }`}
               >
                 {d.title}
@@ -945,6 +927,7 @@ const DocumentPreview = memo(function DocumentPreview({
             ))}
           </div>
 
+          {/* Paper */}
           <div className="flex-1 overflow-auto p-8">
             <div className="mx-auto max-w-[900px] bg-white shadow-2xl rounded-2xl border border-zinc-200 overflow-hidden">
               <div className="px-10 py-8 border-b bg-zinc-50">
@@ -978,7 +961,7 @@ const DocumentPreview = memo(function DocumentPreview({
 });
 
 /* -----------------------------
-Main App — now WHITE and assistant-first
+Main App
 -------------------------------- */
 export default function BuildlioApp() {
   const [view, setView] = useState<ViewState>("landing");
@@ -987,10 +970,6 @@ export default function BuildlioApp() {
   const [showSplash, setShowSplash] = useState(true);
   const [firstChoice, setFirstChoice] = useState<BuildChoice | null>(null);
   const [buildType, setBuildType] = useState<BuildType>("website");
-
-  // Intro preferences (persisted)
-  const [introSpeed, setIntroSpeed] = useState<number>(2.0); // default slower
-  const [reduceMotion, setReduceMotion] = useState<boolean>(false);
 
   // Pending prompt to auto-send after selection/login
   const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
@@ -1024,8 +1003,7 @@ export default function BuildlioApp() {
   const [messages, setMessages] = useState<Message[]>([
     {
       role: "assistant",
-      content:
-        "I’m here with you. Tell me what you want to build — and I’ll turn it into a polished, professional result you can export.",
+      content: "Hi — I’m Buildio. Tell me what you’re building, and I’ll guide you calmly step-by-step to a professional result.",
     },
   ]);
 
@@ -1046,32 +1024,6 @@ export default function BuildlioApp() {
       },
     ]);
   };
-
-  // Persist intro settings + initialize from storage + system preference
-  useEffect(() => {
-    try {
-      const s = localStorage.getItem("buildlio_intro_speed");
-      const rm = localStorage.getItem("buildlio_reduce_motion");
-      if (s) setIntroSpeed(clamp(parseFloat(s), 1, 3));
-      if (rm) setReduceMotion(rm === "1");
-      // If nothing stored, respect OS reduce motion
-      if (!rm && typeof window !== "undefined") {
-        const prefers = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-        if (prefers) setReduceMotion(true);
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      localStorage.setItem("buildlio_intro_speed", String(introSpeed));
-      localStorage.setItem("buildlio_reduce_motion", reduceMotion ? "1" : "0");
-    } catch {
-      // ignore
-    }
-  }, [introSpeed, reduceMotion]);
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data }) => setUser(data?.user ? { email: data.user.email, id: data.user.id } : null));
@@ -1110,7 +1062,7 @@ export default function BuildlioApp() {
     const t = window.setTimeout(() => {
       setHasAutoSent(true);
       internalSend(pendingPrompt);
-    }, 420);
+    }, 520);
 
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1212,7 +1164,7 @@ export default function BuildlioApp() {
 ${tagline ? `<div class="text-sm text-zinc-500 ml-2">${tagline}</div>` : ""}
 </div>
 <div class="flex items-center gap-10 text-sm font-medium">
-${navItems.map((item: string) => `<a href="#" class="hover:text-cyan-600 transition">${item}</a>`).join("")}
+${navItems.map((item: string) => `<a href="#" class="hover:text-cyan-700 transition">${item}</a>`).join("")}
 </div>
 <a href="#" class="bg-zinc-900 text-white px-8 py-3 rounded-2xl font-semibold hover:bg-black transition">Get Started</a>
 </div>
@@ -1225,7 +1177,7 @@ ${(currentPage.blocks || [])
 <section class="py-32 bg-gradient-to-br from-zinc-900 to-black text-white text-center">
 <div class="max-w-5xl mx-auto px-6">
 <h1 class="text-7xl font-black tracking-[-2px] mb-6">${block.headline}</h1>
-<p class="text-2xl text-zinc-400 max-w-3xl mx-auto">${block.subhead}</p>
+<p class="text-2xl text-zinc-300 max-w-3xl mx-auto">${block.subhead}</p>
 ${
   block.cta
     ? `<a href="#" class="mt-12 inline-block bg-white text-black px-12 py-4 rounded-3xl font-bold text-lg hover:scale-105 transition">${block.cta.label}</a>`
@@ -1259,7 +1211,7 @@ ${(block.stats || [])
   .map(
     (s: any) => `
 <div>
-<div class="text-6xl font-black text-cyan-600">${s.value}</div>
+<div class="text-6xl font-black text-cyan-700">${s.value}</div>
 <div class="text-zinc-600 mt-2 font-medium">${s.label}</div>
 </div>`
   )
@@ -1307,7 +1259,7 @@ ${(block.plans || [])
 </div>
 <ul class="mt-10 space-y-4">
 ${(plan.features || [])
-  .map((f: string) => `<li class="flex items-center gap-3"><span class="text-emerald-500">✔</span> ${f}</li>`)
+  .map((f: string) => `<li class="flex items-center gap-3"><span class="text-emerald-600">✔</span> ${f}</li>`)
   .join("")}
 </ul>
 <a href="#" class="mt-12 block text-center py-4 bg-zinc-900 text-white rounded-2xl font-semibold">${plan.cta || "Get started"}</a>
@@ -1344,7 +1296,7 @@ ${block.title ? `<h2>${block.title}</h2>` : ""}
 </section>`;
     if (block.type === "cta")
       return `
-<section class="py-28 bg-gradient-to-r from-cyan-600 to-violet-600 text-white text-center">
+<section class="py-28 bg-gradient-to-r from-cyan-700 to-violet-700 text-white text-center">
 <div class="max-w-3xl mx-auto px-6">
 <h2 class="text-5xl font-black tracking-tight">${block.headline}</h2>
 <p class="mt-6 text-xl">${block.subhead}</p>
@@ -1401,11 +1353,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
 
     const title = active.title || "document";
     const safeName =
-      title
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, "-")
-        .replace(/(^-|-$)/g, "")
-        .slice(0, 64) || "document";
+      title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 64) || "document";
 
     const htmlContent = `<!DOCTYPE html>
 <html lang="en">
@@ -1471,9 +1419,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
     setBuildLogs([]);
     setActiveTab("console");
 
-    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-    const addLogWithDelay = async (msg: string, type: LogEntry["type"] = "info", delayMs = 520) => {
+    const addLogWithDelay = async (msg: string, type: LogEntry["type"] = "info", delayMs = 620) => {
       await sleep(delayMs);
       addLog(msg, type);
     };
@@ -1531,7 +1477,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
 
         setCreditBalance((prev) => prev - 1);
         fetchHistory();
-        await addLogWithDelay(buildType === "document" ? "Done. Your document draft is ready." : "Done. Your full professional site is ready.", "success", 620);
+        await addLogWithDelay(buildType === "document" ? "Done. Your document draft is ready." : "Done. Your full professional site is ready.", "success", 760);
       }
     } catch (err: any) {
       const errMsg = `❌ ${err.message}`;
@@ -1549,21 +1495,10 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
     await internalSend(text);
   }
 
-  const skipIntro = () => {
-    setShowSplash(false);
-    if (user) setView("builder");
-    else setView("auth");
-  };
-
   return (
     <div className={`${inter.variable} ${fira.variable} h-screen flex flex-col bg-white text-zinc-900 overflow-hidden`}>
       {showSplash && (
-        <BuildlioSplash
-          introSpeed={introSpeed}
-          setIntroSpeed={setIntroSpeed}
-          reduceMotion={reduceMotion}
-          setReduceMotion={setReduceMotion}
-          onSkip={skipIntro}
+        <BuildioSplash
           onSelect={(choice) => {
             const bt = choiceToBuildType(choice);
             setFirstChoice(choice);
@@ -1575,12 +1510,19 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
             setTimeout(() => {
               if (user) setView("builder");
               else setView("auth");
-            }, 240);
+            }, 360);
           }}
         />
       )}
 
-      <TopNav view={view} setView={setView} user={user} creditBalance={creditBalance} userEmail={user?.email} onSignOut={() => supabase.auth.signOut()} />
+      <TopNav
+        view={view}
+        setView={setView}
+        user={user}
+        creditBalance={creditBalance}
+        userEmail={user?.email}
+        onSignOut={() => supabase.auth.signOut()}
+      />
 
       <main className="flex-1 flex overflow-hidden">
         {view === "landing" && (
@@ -1589,12 +1531,12 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
               <div className="mb-8 inline-flex items-center gap-4">
                 <div className="text-8xl">⬡</div>
               </div>
-              <h1 className="text-7xl font-black tracking-[-3.5px] leading-[1.05] mb-6">
+              <h1 className="text-7xl font-black tracking-[-3.5px] leading-[1.05] mb-6 text-zinc-900">
                 Prompt.
                 <br />
                 Build.
                 <br />
-                <span className="bg-gradient-to-r from-cyan-600 via-violet-600 to-fuchsia-600 bg-clip-text text-transparent">
+                <span className="bg-gradient-to-r from-cyan-700 via-violet-700 to-fuchsia-700 bg-clip-text text-transparent">
                   Ship professional output.
                 </span>
               </h1>
@@ -1610,10 +1552,9 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
         )}
 
         {view === "auth" && (
-          <div className="flex-1 flex items-center justify-center bg-white">
-            <div className="w-full max-w-md bg-white border border-zinc-200 p-12 rounded-3xl shadow-sm">
-              <h2 className="text-3xl font-black mb-2">Welcome back</h2>
-              <p className="text-sm text-zinc-500 mb-8">Sign in and we’ll continue right where you left off.</p>
+          <div className="flex-1 flex items-center justify-center bg-zinc-50">
+            <div className="w-full max-w-md bg-white border border-zinc-200 p-12 rounded-3xl shadow-xl">
+              <h2 className="text-3xl font-black mb-6 text-zinc-900">Welcome back</h2>
 
               {firstChoice && (
                 <div className="mb-6 rounded-2xl border border-zinc-200 bg-zinc-50 px-5 py-4 text-sm text-zinc-700">
@@ -1646,15 +1587,14 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
         )}
 
         {view === "builder" && (
-          <div className="flex h-full w-full bg-white">
-            {/* Left: assistant + tabs — white, calm */}
-            <aside className="w-[420px] border-r border-zinc-200 bg-white flex flex-col">
+          <div className="flex h-full w-full bg-zinc-50">
+            <aside className="w-96 border-r border-zinc-200 bg-white flex flex-col">
               <div className="flex border-b border-zinc-200">
                 {(["chat", "console", "history"] as const).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
-                    className={`flex-1 py-4 text-sm font-semibold transition-all ${
+                    className={`flex-1 py-4 text-sm font-medium transition-all ${
                       activeTab === tab ? "text-zinc-900 border-b-2 border-cyan-600" : "text-zinc-500 hover:text-zinc-900"
                     }`}
                   >
@@ -1665,60 +1605,35 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
 
               {activeTab === "chat" && (
                 <>
-                  {/* “in touch assistant” header */}
-                  <div className="px-6 py-5 border-b border-zinc-200 bg-white">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <div className="text-[10px] uppercase tracking-[0.22em] text-zinc-500">Your Assistant</div>
-                        <div className="mt-1 text-lg font-black tracking-[-0.02em]">Buildlio</div>
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-zinc-600">
-                        <span className="relative flex h-2.5 w-2.5">
-                          <span className={`absolute inline-flex h-full w-full rounded-full ${isRunning ? "bg-cyan-500 opacity-60" : "bg-emerald-500 opacity-60"}`} />
-                          <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${isRunning ? "bg-cyan-600" : "bg-emerald-600"}`} />
-                        </span>
-                        {isRunning ? "Working…" : "Online"}
-                      </div>
-                    </div>
-
-                    <div className="mt-4 rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-sm text-zinc-700">
-                      {buildType === "document"
-                        ? "Tell me what document you need. I’ll ask 3 quick questions, then draft it clean and print-ready."
-                        : "Tell me what you’re building. I’ll ask 3 quick questions, then generate the full professional build."}
-                    </div>
-                  </div>
-
-                  <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-white">
+                  <div className="flex-1 overflow-y-auto p-6 space-y-7 bg-white">
                     {messages.map((msg, i) => (
                       <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                         <div
-                          className={`max-w-[88%] rounded-3xl px-5 py-4 text-[15px] leading-relaxed shadow-sm ${
+                          className={`max-w-[85%] rounded-3xl px-6 py-4 text-[15px] leading-relaxed ${
                             msg.role === "user"
-                              ? "bg-zinc-900 text-white"
-                              : "bg-white border border-zinc-200 text-zinc-800"
+                              ? "bg-cyan-700 text-white"
+                              : "bg-zinc-50 border border-zinc-200 text-zinc-900"
                           }`}
                         >
                           {msg.role === "assistant" && (
-                            <div className="uppercase text-[10px] tracking-[2px] text-cyan-700 mb-2 font-mono">BUILDLIO</div>
+                            <div className="uppercase text-[10px] tracking-[2px] text-cyan-700 mb-2 font-mono">BUILDIO</div>
                           )}
                           {msg.content}
                         </div>
                       </div>
                     ))}
-
                     {isRunning && (
                       <div className="flex justify-start">
-                        <div className="bg-white border border-zinc-200 rounded-3xl px-5 py-4 flex items-center gap-3 text-sm text-zinc-600 shadow-sm">
+                        <div className="bg-zinc-50 border border-zinc-200 rounded-3xl px-6 py-4 flex items-center gap-3 text-sm text-zinc-600">
                           <div className="flex gap-1.5">
                             <div className="w-1.5 h-1.5 bg-cyan-600 rounded-full animate-bounce" />
                             <div className="w-1.5 h-1.5 bg-cyan-600 rounded-full animate-bounce delay-150" />
                             <div className="w-1.5 h-1.5 bg-cyan-600 rounded-full animate-bounce delay-300" />
                           </div>
-                          {buildType === "document" ? "Drafting…" : "Building…"}
+                          {buildType === "document" ? "Drafting your document…" : "Building your site…"}
                         </div>
                       </div>
                     )}
-
                     <div ref={messagesEndRef} />
                   </div>
 
@@ -1729,21 +1644,21 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                         value={chatInput}
                         onChange={(e) => setChatInput(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && !isRunning && sendMessage()}
-                        placeholder={buildType === "document" ? "Describe the document you need…" : "Describe what you want to build…"}
-                        className="w-full bg-white border border-zinc-200 focus:border-cyan-600 rounded-3xl pl-6 pr-16 py-5 text-sm outline-none shadow-sm"
+                        placeholder={buildType === "document" ? "Tell me what document you need…" : "Tell me what you want to build…"}
+                        className="w-full bg-white border border-zinc-200 focus:border-cyan-600 rounded-3xl pl-7 pr-16 py-5 text-sm outline-none"
                         disabled={isRunning}
                       />
                       <button
                         onClick={sendMessage}
                         disabled={isRunning || !chatInput.trim()}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 bg-gradient-to-br from-cyan-500 to-violet-600 text-white w-11 h-11 rounded-2xl flex items-center justify-center disabled:opacity-40 hover:scale-110 transition"
+                        className="absolute right-3 top-1/2 -translate-y-1/2 bg-gradient-to-br from-cyan-600 to-violet-700 w-11 h-11 rounded-2xl flex items-center justify-center disabled:opacity-40 hover:scale-110 transition text-white"
                         aria-label="Send"
                       >
                         ↑
                       </button>
                     </div>
                     <p className="text-center text-[10px] text-zinc-500 mt-4">
-                      {buildType === "document" ? "When ready, your document appears on the right — export as HTML." : "When ready, your build appears on the right — export as HTML."}
+                      {buildType === "document" ? "Buildio will generate a document draft when ready" : "Buildio will generate a complete site when ready"}
                     </p>
                   </div>
                 </>
@@ -1753,7 +1668,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                 <div className="flex-1 overflow-y-auto p-6 font-mono text-xs bg-white text-zinc-800 space-y-3">
                   <div className="sticky top-0 bg-white pb-4 z-10">
                     <div className="text-[10px] uppercase tracking-[0.22em] text-zinc-500">Build Console</div>
-                    <div className="mt-1 text-xs text-zinc-600">Readable, calm logs.</div>
+                    <div className="mt-1 text-xs text-zinc-600">Clean, readable output — designed for real work.</div>
                     <div className="mt-4 h-px bg-zinc-200" />
                   </div>
 
@@ -1763,7 +1678,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                     buildLogs.map((log, i) => (
                       <div key={i} className="flex gap-3 leading-relaxed">
                         <span className="text-zinc-400 shrink-0 w-[92px]">{log.timestamp}</span>
-                        <span className="text-zinc-500 shrink-0">buildlio&gt;</span>
+                        <span className="text-zinc-500 shrink-0">buildio&gt;</span>
                         <span
                           className={
                             log.type === "success" ? "text-emerald-700" : log.type === "error" ? "text-red-600" : "text-zinc-800"
@@ -1784,12 +1699,12 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                     <p className="text-zinc-500">No versions yet. Build your first one!</p>
                   ) : (
                     history.map((v, i) => (
-                      <div key={i} className="mb-4 bg-white border border-zinc-200 rounded-3xl p-5 text-sm shadow-sm">
-                        <div className="flex justify-between text-xs text-zinc-600">
-                          <span className="font-semibold text-zinc-800">Version {v.version_no}</span>
+                      <div key={i} className="mb-4 bg-zinc-50 border border-zinc-200 rounded-3xl p-5 text-sm">
+                        <div className="flex justify-between text-xs">
+                          <span>Version {v.version_no}</span>
                           <span className="text-zinc-500">{new Date(v.created_at).toLocaleDateString()}</span>
                         </div>
-                        <div className="mt-2 text-emerald-700 text-xs font-semibold">Ready to export</div>
+                        <div className="mt-2 text-emerald-700 text-xs">Ready to export</div>
                       </div>
                     ))
                   )}
@@ -1797,8 +1712,8 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
               )}
             </aside>
 
-            {/* Right: preview + export bar */}
-            <div className="flex-1 flex flex-col bg-white">
+            <div className="flex-1 flex flex-col">
+              {/* Top bar: Website pages OR Document export */}
               <div className="h-14 border-b border-zinc-200 bg-white flex items-center px-6 gap-2 overflow-x-auto">
                 {buildType !== "document" && isSiteSnapshot(snapshot) && (
                   <>
@@ -1806,8 +1721,10 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                       <button
                         key={p.slug}
                         onClick={() => setActivePageSlug(p.slug)}
-                        className={`px-5 py-2 text-sm rounded-2xl transition whitespace-nowrap ${
-                          activePageSlug === p.slug ? "bg-zinc-900 text-white font-semibold" : "hover:bg-zinc-100 text-zinc-700"
+                        className={`px-6 py-2 text-sm rounded-2xl transition whitespace-nowrap border ${
+                          activePageSlug === p.slug
+                            ? "bg-zinc-900 text-white border-zinc-900 font-semibold"
+                            : "bg-white hover:bg-zinc-50 text-zinc-700 border-zinc-200"
                         }`}
                       >
                         {p.title || (p.slug === "index" ? "Home" : p.slug.charAt(0).toUpperCase() + p.slug.slice(1))}
@@ -1821,12 +1738,13 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                 <button
                   onClick={exportCurrent}
                   disabled={!snapshot}
-                  className="flex items-center gap-2 px-7 py-2.5 bg-zinc-900 text-white hover:bg-black rounded-2xl text-sm font-semibold disabled:opacity-40 transition"
+                  className="flex items-center gap-2 px-7 py-2.5 bg-zinc-900 hover:bg-black rounded-2xl text-sm font-medium disabled:opacity-40 transition text-white"
                 >
                   {buildType === "document" ? "Export Document" : "Export Full HTML"}
                 </button>
               </div>
 
+              {/* Renderer switch */}
               {buildType === "document" ? (
                 <DocumentPreview
                   snapshot={isDocSnapshot(snapshot) ? snapshot : null}
