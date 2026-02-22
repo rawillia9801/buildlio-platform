@@ -1,9 +1,3 @@
-Robert Williams <rawillia9809@gmail.com>
-	
-11:42 PM (0 minutes ago)
-	
-	
-to me
 /* FILE: app/page.tsx
 BUILDLIO.SITE — v5.0: Personal Splash Pacing + White Build Console + Sploosh Choice + Smooth Auto-Start
 
