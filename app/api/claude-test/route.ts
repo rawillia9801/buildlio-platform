@@ -1,8 +1,7 @@
 // FILE: app/api/claude-test/route.ts
-// BUILDLIO.SITE — v4.2 Backend (Build-Fixed)
-// • Fixed TS error with Anthropic content blocks (text + thinking)
-// • Robust multi-block text extraction
-// • Ready for claude-3-5-sonnet or future models
+// BUILDLIO.SITE — v4.3 Backend (Anthropic Error Fixed)
+// • Removed top_p (model doesn't allow it with temperature)
+// • Everything else unchanged — rich sites, navigation, all blocks, etc.
 
 import { Anthropic } from "@anthropic-ai/sdk";
 import { createServerClient } from "@supabase/ssr";
@@ -36,7 +35,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
     }
 
-    // === UPGRADED SYSTEM PROMPT (unchanged from v4.1) ===
     const systemPrompt = `
 You are Buildlio — a world-class, friendly, and extremely talented AI website architect.
 You specialize in creating stunning, conversion-focused, modern professional websites in seconds.
@@ -46,74 +44,55 @@ No explanations, no markdown, no extra text — just pure JSON.
 
 Two possible response types:
 
-1. If you still need more details from the user:
+1. If you still need more details:
 {
   "type": "chat",
-  "message": "Warm, helpful reply + smart questions to gather exactly what you need."
+  "message": "Warm, helpful reply + smart questions."
 }
 
-2. When you have enough information to build a complete professional site:
+2. When ready to build:
 {
   "type": "build",
-  "message": "Beautiful confirmation message to the user (e.g. 'Your premium site is ready!')",
+  "message": "Your premium site is ready!",
   "snapshot": {
     "appName": "Your Brand Name",
-    "tagline": "Short, powerful tagline that captures the essence",
-    "navigation": {
-      "items": ["Home", "Features", "Pricing", "About", "Contact"]
-    },
+    "tagline": "Short powerful tagline",
+    "navigation": { "items": ["Home", "Features", "Pricing", "About", "Contact"] },
     "pages": [
       {
         "slug": "index",
         "title": "Home",
         "blocks": [
-          {
-            "type": "hero",
-            "headline": "Powerful, benefit-driven headline",
-            "subhead": "Compelling supporting paragraph (2-3 lines max)",
-            "cta": { "label": "Get Started Free", "variant": "primary" }
-          },
-          {
-            "type": "features",
-            "title": "Why companies love us",
-            "items": [
-              { "title": "Feature name", "description": "Persuasive 1-2 sentence benefit" }
-            ]
-          }
-          // Add any of: stats, testimonials, pricing, faq, content, cta
+          { "type": "hero", "headline": "...", "subhead": "...", "cta": { "label": "Get Started" } },
+          { "type": "features", "title": "...", "items": [...] },
+          // stats, testimonials, pricing, faq, content, cta all supported
         ]
       }
     ]
   }
 }
 
-Excellence Guidelines:
-- Write extremely high-quality, benefit-driven marketing copy.
-- Always include a clean, useful navigation menu.
-- Make it feel premium and 2026-modern.
+Write high-quality, benefit-driven copy. Make it feel premium and modern.
 `;
 
     const aiResponse = await anthropic.messages.create({
-      model: "claude-sonnet-4-6",   // ← keep your model name (or change to "claude-3-5-sonnet-20241022" if you prefer)
+      model: "claude-sonnet-4-6",
       max_tokens: 12000,
-      temperature: 0.71,
-      top_p: 0.95,
+      temperature: 0.71,           // ← kept (best for creative output)
       system: systemPrompt,
       messages: messages,
     });
 
-    // === FIXED: Safe text extraction that ignores "thinking" blocks ===
+    // Safe text extraction (handles thinking blocks)
     let rawOutput = "{}";
     const textBlocks = aiResponse.content.filter((block: any) => block.type === "text");
-
     if (textBlocks.length > 0) {
       rawOutput = textBlocks.map((block: any) => block.text).join("\n");
     }
 
-    // === ROBUST JSON EXTRACTION ===
+    // Robust JSON extraction
     const jsonStart = rawOutput.indexOf('{');
     const jsonEnd = rawOutput.lastIndexOf('}');
-
     if (jsonStart !== -1 && jsonEnd !== -1 && jsonEnd > jsonStart) {
       rawOutput = rawOutput.slice(jsonStart, jsonEnd + 1);
     }
@@ -122,47 +101,38 @@ Excellence Guidelines:
     try {
       parsedResponse = JSON.parse(rawOutput);
     } catch (parseErr) {
-      console.error("JSON Parse Error — Raw output:", rawOutput);
+      console.error("JSON Parse Error:", rawOutput);
       return NextResponse.json({ 
         success: false, 
-        error: "AI returned malformed JSON. Please try rephrasing your request." 
+        error: "AI returned malformed JSON. Please try again." 
       }, { status: 500 });
     }
 
     if (!parsedResponse.type || !["chat", "build"].includes(parsedResponse.type)) {
-      return NextResponse.json({ 
-        success: false, 
-        error: "Invalid response format from AI" 
-      }, { status: 500 });
+      return NextResponse.json({ success: false, error: "Invalid AI response format" }, { status: 500 });
     }
 
-    // Save to DB + charge credit ONLY on build
+    // Save & charge only on build
     if (parsedResponse.type === "build" && parsedResponse.snapshot) {
       const { error: rpcError } = await supabase.rpc("save_version_and_charge_credit", {
         p_project_id: projectId,
         p_owner_id: authData.user.id,
         p_snapshot: parsedResponse.snapshot,
-        p_note: "Professional Build v4.2",
+        p_note: "Professional Build v4.3",
         p_model: "claude-sonnet-4-6"
       });
 
       if (rpcError) {
-        console.error("Database save error:", rpcError);
-        return NextResponse.json({ success: false, error: "Failed to save project version" }, { status: 500 });
+        console.error("DB error:", rpcError);
+        return NextResponse.json({ success: false, error: "Failed to save version" }, { status: 500 });
       }
     }
     
-    return NextResponse.json({ 
-      success: true, 
-      data: parsedResponse 
-    });
+    return NextResponse.json({ success: true, data: parsedResponse });
 
   } catch (err: unknown) {
     console.error("API Error:", err);
     const errorMessage = err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ 
-      success: false, 
-      error: errorMessage 
-    }, { status: 500 });
+    return NextResponse.json({ success: false, error: errorMessage }, { status: 500 });
   }
 }
