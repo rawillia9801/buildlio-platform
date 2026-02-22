@@ -1,9 +1,8 @@
 /* FILE: app/page.tsx
-   BUILDLIO.SITE — v4.4: Typing Focus Fix (No More 1-Letter Bug)
-   - FIX: Input focus no longer drops after 1 character
-   - FIX: TopNav moved outside component (prevents re-creation each render)
-   - ADD: Chat input focus-lock only when Chat tab is active
-   - KEPT: Your existing UI, preview, export, logs, history, Supabase auth, Claude build flow
+   BUILDLIO.SITE — v4.5: White Splash Intro + Typing Focus Fix
+   - ADD: White first-load splash with type-on greeting + smooth fade
+   - KEEP: High-tech UI, builder flow, export, logs, history
+   - KEEP: Chat input focus stability (no 1-letter bug)
 */
 
 "use client";
@@ -18,9 +17,114 @@ type ViewState = "landing" | "auth" | "builder" | "pricing";
 type Message = { role: "user" | "assistant"; content: string };
 type LogEntry = { timestamp: string; message: string; type: "info" | "success" | "error" };
 type Tab = "chat" | "console" | "history";
-
 type UserLite = { email?: string; id?: string } | null;
 
+/* -----------------------------
+   White Splash Intro Component
+-------------------------------- */
+function SplashIntro({
+  onDone,
+}: {
+  onDone: () => void;
+}) {
+  const L1 = "Hello! I’m Buildlio —";
+  const L2 = "Let’s turn your dream into a reality.";
+  const L3 = "What are we building today?";
+
+  const [line1, setLine1] = useState("");
+  const [line2, setLine2] = useState("");
+  const [line3, setLine3] = useState("");
+  const [phase, setPhase] = useState<1 | 2 | 3 | 4>(1);
+  const [fadeOut, setFadeOut] = useState(false);
+
+  useEffect(() => {
+    let t: any;
+
+    const type = (full: string, setter: (v: string) => void, speed = 18) => {
+      let i = 0;
+      return new Promise<void>((resolve) => {
+        const tick = () => {
+          i++;
+          setter(full.slice(0, i));
+          if (i >= full.length) return resolve();
+          t = setTimeout(tick, speed);
+        };
+        t = setTimeout(tick, 220);
+      });
+    };
+
+    const run = async () => {
+      await type(L1, setLine1, 18);
+      setPhase(2);
+      await type(L2, setLine2, 16);
+      setPhase(3);
+      await type(L3, setLine3, 16);
+      setPhase(4);
+
+      // small pause so it feels intentional
+      await new Promise((r) => setTimeout(r, 550));
+
+      setFadeOut(true);
+      await new Promise((r) => setTimeout(r, 520));
+      onDone();
+    };
+
+    run();
+
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div
+      className={`fixed inset-0 z-[9999] bg-white text-zinc-900 transition-opacity duration-500 ${
+        fadeOut ? "opacity-0" : "opacity-100"
+      }`}
+    >
+      <div className="h-full w-full flex items-center justify-center px-6">
+        <div className="max-w-3xl w-full">
+          <div className="flex items-center gap-4 mb-10">
+            <div className="w-12 h-12 rounded-3xl bg-gradient-to-br from-cyan-500 to-violet-600 flex items-center justify-center text-white font-black text-xl">
+              ⬡
+            </div>
+            <div>
+              <div className="text-sm font-semibold tracking-[0.2em] uppercase text-zinc-500">
+                buildlio.site
+              </div>
+              <div className="text-xs text-zinc-400">AI Website Architect</div>
+            </div>
+          </div>
+
+          <div className="space-y-5">
+            <div className="text-4xl md:text-5xl font-black tracking-[-0.03em] leading-[1.05]">
+              {line1}
+              {phase === 1 && <span className="inline-block w-2 h-8 align-middle ml-1 bg-zinc-900 animate-pulse" />}
+            </div>
+
+            <div className="text-2xl md:text-3xl font-semibold text-zinc-700 tracking-[-0.02em]">
+              {line2}
+              {phase === 2 && <span className="inline-block w-2 h-7 align-middle ml-1 bg-zinc-900 animate-pulse" />}
+            </div>
+
+            <div className="text-xl md:text-2xl text-zinc-600">
+              {line3}
+              {phase === 3 && <span className="inline-block w-2 h-6 align-middle ml-1 bg-zinc-900 animate-pulse" />}
+            </div>
+          </div>
+
+          <div className="mt-12 flex items-center gap-3 text-sm text-zinc-500">
+            <div className="w-2.5 h-2.5 rounded-full bg-emerald-500" />
+            <span>Preparing your builder…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* -----------------------------
+   Top Navigation (stable)
+-------------------------------- */
 function TopNav({
   view,
   setView,
@@ -82,12 +186,15 @@ function TopNav({
   );
 }
 
+/* -----------------------------
+   Main App
+-------------------------------- */
 export default function BuildlioApp() {
   const [view, setView] = useState<ViewState>("landing");
+  const [splashDone, setSplashDone] = useState(false);
 
   const supabase = useMemo(
-    () =>
-      createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
+    () => createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
     []
   );
 
@@ -130,7 +237,7 @@ export default function BuildlioApp() {
     ]);
   };
 
-  // ✅ Focus lock: prevents the "1 letter then click" issue
+  // ✅ Focus lock to prevent the “1 letter then click” issue
   useEffect(() => {
     if (view === "builder" && activeTab === "chat" && !isRunning) {
       const t = setTimeout(() => chatInputRef.current?.focus(), 0);
@@ -182,20 +289,17 @@ export default function BuildlioApp() {
     const siteName = snapshot.appName || "Your Site";
     const tagline = snapshot.tagline || "";
 
-    let htmlContent = `<!DOCTYPE html>
+    const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${currentPage.title || siteName}</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    body { font-family: system-ui, -apple-system, sans-serif; }
-  </style>
+  <style> body { font-family: system-ui, -apple-system, sans-serif; } </style>
 </head>
 <body class="bg-zinc-50 text-zinc-900">
 
-  <!-- Navbar -->
   <nav class="bg-white border-b sticky top-0 z-50 shadow-sm">
     <div class="max-w-7xl mx-auto px-8 h-20 flex items-center justify-between">
       <div class="flex items-center gap-3">
@@ -209,154 +313,119 @@ export default function BuildlioApp() {
     </div>
   </nav>
 
-  <!-- Page Content -->
   <main>
-    ${currentPage.blocks
-      ?.map((block: any) => {
-        if (block.type === "hero")
-          return `
-        <section class="py-32 bg-gradient-to-br from-zinc-900 to-black text-white text-center">
-          <div class="max-w-5xl mx-auto px-6">
-            <h1 class="text-7xl font-black tracking-[-2px] mb-6">${block.headline}</h1>
-            <p class="text-2xl text-zinc-400 max-w-3xl mx-auto">${block.subhead}</p>
-            ${block.cta ? `<a href="#" class="mt-12 inline-block bg-white text-black px-12 py-4 rounded-3xl font-bold text-lg hover:scale-105 transition">${block.cta.label}</a>` : ""}
-          </div>
-        </section>`;
-
-        if (block.type === "features")
-          return `
-        <section class="py-28 bg-white">
-          <div class="max-w-6xl mx-auto px-6">
-            ${block.title ? `<h2 class="text-4xl font-semibold text-center mb-16">${block.title}</h2>` : ""}
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-              ${block.items
-                ?.map(
-                  (item: any) => `
-                <div class="bg-zinc-50 hover:bg-white border border-transparent hover:border-zinc-200 p-10 rounded-3xl transition-all">
-                  <h3 class="text-2xl font-semibold mb-4">${item.title}</h3>
-                  <p class="text-zinc-600">${item.description}</p>
-                </div>
-              `
-                )
-                .join("")}
+    ${(currentPage.blocks || [])
+      .map((block: any) => {
+        if (block.type === "hero") return `
+          <section class="py-32 bg-gradient-to-br from-zinc-900 to-black text-white text-center">
+            <div class="max-w-5xl mx-auto px-6">
+              <h1 class="text-7xl font-black tracking-[-2px] mb-6">${block.headline}</h1>
+              <p class="text-2xl text-zinc-400 max-w-3xl mx-auto">${block.subhead}</p>
+              ${block.cta ? `<a href="#" class="mt-12 inline-block bg-white text-black px-12 py-4 rounded-3xl font-bold text-lg hover:scale-105 transition">${block.cta.label}</a>` : ""}
             </div>
-          </div>
-        </section>`;
+          </section>`;
 
-        if (block.type === "stats")
-          return `
-        <section class="py-20 bg-white border-t border-b">
-          <div class="max-w-6xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-12 text-center">
-            ${block.stats
-              ?.map(
-                (s: any) => `
-              <div>
-                <div class="text-6xl font-black text-cyan-600">${s.value}</div>
-                <div class="text-zinc-600 mt-2 font-medium">${s.label}</div>
+        if (block.type === "features") return `
+          <section class="py-28 bg-white">
+            <div class="max-w-6xl mx-auto px-6">
+              ${block.title ? `<h2 class="text-4xl font-semibold text-center mb-16">${block.title}</h2>` : ""}
+              <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                ${(block.items || []).map((item: any) => `
+                  <div class="bg-zinc-50 hover:bg-white border border-transparent hover:border-zinc-200 p-10 rounded-3xl transition-all">
+                    <h3 class="text-2xl font-semibold mb-4">${item.title}</h3>
+                    <p class="text-zinc-600">${item.description}</p>
+                  </div>`).join("")}
               </div>
-            `
-              )
-              .join("")}
-          </div>
-        </section>`;
+            </div>
+          </section>`;
 
-        if (block.type === "testimonials")
-          return `
-        <section class="py-28 bg-zinc-50">
-          <div class="max-w-6xl mx-auto px-6">
-            <h2 class="text-4xl font-semibold text-center mb-16">What our customers say</h2>
-            <div class="grid md:grid-cols-3 gap-8">
-              ${block.items
-                ?.map(
-                  (t: any) => `
-                <div class="bg-white p-10 rounded-3xl border">
-                  <p class="italic text-lg leading-relaxed">"${t.quote}"</p>
-                  <div class="mt-8 flex items-center gap-3">
-                    <div class="w-10 h-10 bg-zinc-200 rounded-full"></div>
-                    <div>
-                      <div class="font-semibold">${t.name}</div>
-                      <div class="text-sm text-zinc-500">${t.role}${t.company ? ` at ${t.company}` : ""}</div>
+        if (block.type === "stats") return `
+          <section class="py-20 bg-white border-t border-b">
+            <div class="max-w-6xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-12 text-center">
+              ${(block.stats || []).map((s: any) => `
+                <div>
+                  <div class="text-6xl font-black text-cyan-600">${s.value}</div>
+                  <div class="text-zinc-600 mt-2 font-medium">${s.label}</div>
+                </div>`).join("")}
+            </div>
+          </section>`;
+
+        if (block.type === "testimonials") return `
+          <section class="py-28 bg-zinc-50">
+            <div class="max-w-6xl mx-auto px-6">
+              <h2 class="text-4xl font-semibold text-center mb-16">What our customers say</h2>
+              <div class="grid md:grid-cols-3 gap-8">
+                ${(block.items || []).map((t: any) => `
+                  <div class="bg-white p-10 rounded-3xl border">
+                    <p class="italic text-lg leading-relaxed">"${t.quote}"</p>
+                    <div class="mt-8 flex items-center gap-3">
+                      <div class="w-10 h-10 bg-zinc-200 rounded-full"></div>
+                      <div>
+                        <div class="font-semibold">${t.name}</div>
+                        <div class="text-sm text-zinc-500">${t.role}${t.company ? ` at ${t.company}` : ""}</div>
+                      </div>
                     </div>
-                  </div>
-                </div>
-              `
-                )
-                .join("")}
+                  </div>`).join("")}
+              </div>
             </div>
-          </div>
-        </section>`;
+          </section>`;
 
-        if (block.type === "pricing")
-          return `
-        <section class="py-28 bg-white">
-          <div class="max-w-6xl mx-auto px-6">
-            <h2 class="text-4xl font-semibold text-center mb-16">Simple pricing</h2>
-            <div class="grid md:grid-cols-3 gap-8">
-              ${block.plans
-                ?.map(
-                  (plan: any) => `
-                <div class="${plan.popular ? "ring-2 ring-cyan-500 scale-105" : ""} bg-white border rounded-3xl p-10 transition">
-                  <h3 class="text-2xl font-semibold">${plan.name}</h3>
-                  <div class="mt-6 flex items-baseline">
-                    <span class="text-6xl font-black">${plan.price}</span>
-                    <span class="ml-2 text-zinc-500">${plan.interval}</span>
-                  </div>
-                  <ul class="mt-10 space-y-4">
-                    ${plan.features?.map((f: string) => `<li class="flex items-center gap-3"><span class="text-emerald-500">✔</span> ${f}</li>`).join("")}
-                  </ul>
-                  <a href="#" class="mt-12 block text-center py-4 bg-zinc-900 text-white rounded-2xl font-semibold">${plan.cta || "Get started"}</a>
-                </div>
-              `
-                )
-                .join("")}
+        if (block.type === "pricing") return `
+          <section class="py-28 bg-white">
+            <div class="max-w-6xl mx-auto px-6">
+              <h2 class="text-4xl font-semibold text-center mb-16">Simple pricing</h2>
+              <div class="grid md:grid-cols-3 gap-8">
+                ${(block.plans || []).map((plan: any) => `
+                  <div class="${plan.popular ? "ring-2 ring-cyan-500 scale-105" : ""} bg-white border rounded-3xl p-10 transition">
+                    <h3 class="text-2xl font-semibold">${plan.name}</h3>
+                    <div class="mt-6 flex items-baseline">
+                      <span class="text-6xl font-black">${plan.price}</span>
+                      <span class="ml-2 text-zinc-500">${plan.interval}</span>
+                    </div>
+                    <ul class="mt-10 space-y-4">
+                      ${(plan.features || []).map((f: string) => `<li class="flex items-center gap-3"><span class="text-emerald-500">✔</span> ${f}</li>`).join("")}
+                    </ul>
+                    <a href="#" class="mt-12 block text-center py-4 bg-zinc-900 text-white rounded-2xl font-semibold">${plan.cta || "Get started"}</a>
+                  </div>`).join("")}
+              </div>
             </div>
-          </div>
-        </section>`;
+          </section>`;
 
-        if (block.type === "faq")
-          return `
-        <section class="py-28 bg-zinc-50">
-          <div class="max-w-3xl mx-auto px-6">
-            <h2 class="text-4xl font-semibold text-center mb-16">Frequently asked questions</h2>
-            ${block.items
-              ?.map(
-                (item: any) => `
-              <details class="group border-b py-6">
-                <summary class="flex justify-between items-center font-medium cursor-pointer list-none">
-                  ${item.q}
-                  <span class="text-xl group-open:rotate-45 transition">+</span>
-                </summary>
-                <p class="mt-4 text-zinc-600">${item.a}</p>
-              </details>
-            `
-              )
-              .join("")}
-          </div>
-        </section>`;
+        if (block.type === "faq") return `
+          <section class="py-28 bg-zinc-50">
+            <div class="max-w-3xl mx-auto px-6">
+              <h2 class="text-4xl font-semibold text-center mb-16">Frequently asked questions</h2>
+              ${(block.items || []).map((item: any) => `
+                <details class="group border-b py-6">
+                  <summary class="flex justify-between items-center font-medium cursor-pointer list-none">
+                    ${item.q}
+                    <span class="text-xl group-open:rotate-45 transition">+</span>
+                  </summary>
+                  <p class="mt-4 text-zinc-600">${item.a}</p>
+                </details>`).join("")}
+            </div>
+          </section>`;
 
-        if (block.type === "content")
-          return `
-        <section class="py-24 max-w-3xl mx-auto px-6 prose prose-zinc prose-lg">
-          ${block.title ? `<h2>${block.title}</h2>` : ""}
-          <div>${block.body || block.content || ""}</div>
-        </section>`;
+        if (block.type === "content") return `
+          <section class="py-24 max-w-3xl mx-auto px-6 prose prose-zinc prose-lg">
+            ${block.title ? `<h2>${block.title}</h2>` : ""}
+            <div>${block.body || block.content || ""}</div>
+          </section>`;
 
-        if (block.type === "cta")
-          return `
-        <section class="py-28 bg-gradient-to-r from-cyan-600 to-violet-600 text-white text-center">
-          <div class="max-w-3xl mx-auto px-6">
-            <h2 class="text-5xl font-black tracking-tight">${block.headline}</h2>
-            <p class="mt-6 text-xl">${block.subhead}</p>
-            ${block.buttonLabel ? `<a href="#" class="mt-10 inline-block bg-white text-black px-12 py-4 rounded-3xl font-bold text-lg">${block.buttonLabel}</a>` : ""}
-          </div>
-        </section>`;
+        if (block.type === "cta") return `
+          <section class="py-28 bg-gradient-to-r from-cyan-600 to-violet-600 text-white text-center">
+            <div class="max-w-3xl mx-auto px-6">
+              <h2 class="text-5xl font-black tracking-tight">${block.headline}</h2>
+              <p class="mt-6 text-xl">${block.subhead}</p>
+              ${block.buttonLabel ? `<a href="#" class="mt-10 inline-block bg-white text-black px-12 py-4 rounded-3xl font-bold text-lg">${block.buttonLabel}</a>` : ""}
+            </div>
+          </section>`;
 
         return "";
       })
       .join("")}
   </main>
 
-  <!-- Footer -->
   <footer class="bg-zinc-950 text-zinc-400 py-20">
     <div class="max-w-7xl mx-auto px-8 grid grid-cols-2 md:grid-cols-4 gap-10">
       <div>
@@ -378,6 +447,7 @@ export default function BuildlioApp() {
     </div>
     <div class="text-center text-xs mt-20 opacity-60">© ${new Date().getFullYear()} ${siteName} • Built instantly with Buildlio</div>
   </footer>
+
 </body>
 </html>`;
 
@@ -426,10 +496,7 @@ export default function BuildlioApp() {
           .select("id")
           .single();
 
-        if (projError || !proj?.id) {
-          throw new Error(projError?.message || "Could not create project.");
-        }
-
+        if (projError || !proj?.id) throw new Error(projError?.message || "Could not create project.");
         currentPid = proj.id;
         setProjectId(currentPid);
       }
@@ -476,7 +543,6 @@ export default function BuildlioApp() {
 
     return (
       <div className="flex-1 bg-zinc-950 flex flex-col relative overflow-hidden">
-        {/* Browser chrome */}
         <div className="h-11 bg-zinc-900 flex items-center px-4 border-b border-zinc-800">
           <div className="flex gap-1.5">
             <div className="w-3 h-3 bg-red-500 rounded-full" />
@@ -489,7 +555,6 @@ export default function BuildlioApp() {
         </div>
 
         <div className="flex-1 overflow-auto bg-white">
-          {/* Professional Navbar */}
           <nav className="bg-white border-b sticky top-0 z-40 shadow-sm">
             <div className="max-w-7xl mx-auto px-8 h-20 flex items-center justify-between">
               <div className="flex items-center gap-4">
@@ -512,9 +577,7 @@ export default function BuildlioApp() {
           {!snapshot ? (
             <div className="h-[calc(100vh-110px)] flex flex-col items-center justify-center bg-zinc-50">
               <div className="text-8xl opacity-10 mb-6">⬡</div>
-              <p className="text-xl font-medium text-zinc-400">
-                Chat with Buildlio — a full professional site will appear here
-              </p>
+              <p className="text-xl font-medium text-zinc-400">Chat with Buildlio — a full professional site will appear here</p>
             </div>
           ) : (
             <div className="pb-12">
@@ -523,9 +586,7 @@ export default function BuildlioApp() {
                   {block.type === "hero" && (
                     <section className="py-32 bg-gradient-to-br from-zinc-900 via-black to-zinc-950 text-white text-center">
                       <div className="max-w-5xl mx-auto px-6">
-                        <h1 className="text-7xl md:text-[5.5rem] font-black tracking-[-3px] leading-none mb-8">
-                          {block.headline}
-                        </h1>
+                        <h1 className="text-7xl md:text-[5.5rem] font-black tracking-[-3px] leading-none mb-8">{block.headline}</h1>
                         <p className="text-2xl text-zinc-400 max-w-3xl mx-auto">{block.subhead}</p>
                         {block.cta && (
                           <button className="mt-12 bg-white text-black px-14 py-4 rounded-3xl font-bold text-xl hover:scale-105 transition">
@@ -543,9 +604,7 @@ export default function BuildlioApp() {
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
                           {block.items?.map((item: any, j: number) => (
                             <div key={j} className="group bg-zinc-50 hover:bg-white border p-10 rounded-3xl transition-all">
-                              <h3 className="text-2xl font-semibold mb-4 group-hover:text-cyan-600 transition">
-                                {item.title}
-                              </h3>
+                              <h3 className="text-2xl font-semibold mb-4 group-hover:text-cyan-600 transition">{item.title}</h3>
                               <p className="text-zinc-600 leading-relaxed">{item.description}</p>
                             </div>
                           ))}
@@ -579,10 +638,7 @@ export default function BuildlioApp() {
                                 <div className="w-11 h-11 bg-gradient-to-br from-cyan-200 to-violet-200 rounded-full" />
                                 <div>
                                   <div className="font-semibold">{t.name}</div>
-                                  <div className="text-sm text-zinc-500">
-                                    {t.role}
-                                    {t.company ? ` • ${t.company}` : ""}
-                                  </div>
+                                  <div className="text-sm text-zinc-500">{t.role}{t.company ? ` • ${t.company}` : ""}</div>
                                 </div>
                               </div>
                             </div>
@@ -598,12 +654,7 @@ export default function BuildlioApp() {
                         <h2 className="text-4xl font-semibold text-center mb-16">Choose your plan</h2>
                         <div className="grid md:grid-cols-3 gap-8">
                           {block.plans?.map((plan: any, j: number) => (
-                            <div
-                              key={j}
-                              className={`rounded-3xl p-10 border transition-all ${
-                                plan.popular ? "ring-2 ring-offset-4 ring-cyan-500 scale-[1.03]" : "hover:shadow-xl"
-                              }`}
-                            >
+                            <div key={j} className={`rounded-3xl p-10 border transition-all ${plan.popular ? "ring-2 ring-offset-4 ring-cyan-500 scale-[1.03]" : "hover:shadow-xl"}`}>
                               <div className="font-semibold text-lg">{plan.name}</div>
                               <div className="mt-8 flex items-baseline gap-1">
                                 <span className="text-6xl font-black tracking-tighter">{plan.price}</span>
@@ -611,9 +662,7 @@ export default function BuildlioApp() {
                               </div>
                               <ul className="mt-12 space-y-4 text-sm">
                                 {plan.features?.map((f: string, k: number) => (
-                                  <li key={k} className="flex items-start gap-3">
-                                    <span className="text-emerald-500 mt-0.5">✔</span> {f}
-                                  </li>
+                                  <li key={k} className="flex items-start gap-3"><span className="text-emerald-500 mt-0.5">✔</span> {f}</li>
                                 ))}
                               </ul>
                               <button className="mt-12 w-full py-4 bg-zinc-900 hover:bg-black text-white rounded-2xl font-semibold transition">
@@ -670,7 +719,6 @@ export default function BuildlioApp() {
             </div>
           )}
 
-          {/* Footer */}
           <footer className="bg-zinc-950 text-zinc-400 py-20">
             <div className="max-w-7xl mx-auto px-8 grid grid-cols-2 md:grid-cols-4 gap-y-12">
               <div>
@@ -683,18 +731,11 @@ export default function BuildlioApp() {
               </div>
               <div>
                 <div className="font-semibold text-white mb-5">Company</div>
-                <div className="space-y-2 text-sm">
-                  <div>About Us</div>
-                  <div>Blog</div>
-                  <div>Careers</div>
-                </div>
+                <div className="space-y-2 text-sm"><div>About Us</div><div>Blog</div><div>Careers</div></div>
               </div>
               <div>
                 <div className="font-semibold text-white mb-5">Legal</div>
-                <div className="space-y-2 text-sm">
-                  <div>Privacy Policy</div>
-                  <div>Terms of Service</div>
-                </div>
+                <div className="space-y-2 text-sm"><div>Privacy Policy</div><div>Terms of Service</div></div>
               </div>
             </div>
             <div className="text-center text-xs mt-16 opacity-60">© {new Date().getFullYear()} — Instant professional websites by Buildlio</div>
@@ -706,6 +747,8 @@ export default function BuildlioApp() {
 
   return (
     <div className={`${inter.variable} ${fira.variable} h-screen flex flex-col bg-zinc-950 text-zinc-200 overflow-hidden`}>
+      {!splashDone && <SplashIntro onDone={() => setSplashDone(true)} />}
+
       <TopNav
         view={view}
         setView={setView}
@@ -718,7 +761,7 @@ export default function BuildlioApp() {
       <main className="flex-1 flex overflow-hidden">
         {view === "landing" && (
           <div className="flex-1 flex items-center justify-center bg-[radial-gradient(#27272a_1px,transparent_1px)] [background-size:32px_32px]">
-            <div className="text-center max-w-3xl">
+            <div className="text-center max-w-3xl px-6">
               <div className="mb-8 inline-flex items-center gap-4">
                 <div className="text-8xl">⬡</div>
               </div>
@@ -760,7 +803,10 @@ export default function BuildlioApp() {
                 value={loginPassword}
                 onChange={(e) => setLoginPassword(e.target.value)}
               />
-              <button onClick={handleAuth} className="w-full py-5 bg-white text-black font-bold rounded-2xl hover:bg-zinc-100 transition">
+              <button
+                onClick={handleAuth}
+                className="w-full py-5 bg-white text-black font-bold rounded-2xl hover:bg-zinc-100 transition"
+              >
                 Sign in
               </button>
             </div>
@@ -769,7 +815,6 @@ export default function BuildlioApp() {
 
         {view === "builder" && (
           <div className="flex h-full w-full">
-            {/* Left Sidebar */}
             <aside className="w-96 border-r border-white/10 bg-zinc-950 flex flex-col">
               <div className="flex border-b border-white/10">
                 {(["chat", "console", "history"] as const).map((tab) => (
@@ -785,7 +830,6 @@ export default function BuildlioApp() {
                 ))}
               </div>
 
-              {/* Chat Tab */}
               {activeTab === "chat" && (
                 <>
                   <div className="flex-1 overflow-y-auto p-6 space-y-7 bg-zinc-950">
@@ -846,7 +890,6 @@ export default function BuildlioApp() {
                 </>
               )}
 
-              {/* Console Tab */}
               {activeTab === "console" && (
                 <div className="flex-1 overflow-y-auto p-6 font-mono text-xs bg-black/70 text-emerald-300 space-y-4">
                   {buildLogs.length === 0 ? (
@@ -867,7 +910,6 @@ export default function BuildlioApp() {
                 </div>
               )}
 
-              {/* History Tab */}
               {activeTab === "history" && (
                 <div className="flex-1 overflow-y-auto p-6">
                   <div className="text-xs uppercase tracking-widest text-zinc-500 mb-6">Version History</div>
@@ -888,7 +930,6 @@ export default function BuildlioApp() {
               )}
             </aside>
 
-            {/* Preview Area */}
             <div className="flex-1 flex flex-col">
               <div className="h-14 border-b border-white/10 bg-zinc-900 flex items-center px-6 gap-2 overflow-x-auto">
                 {snapshot?.pages?.map((p: any) => (
