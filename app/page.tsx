@@ -1,9 +1,9 @@
 "use client";
-import React, { useMemo, useRef, useState, useEffect, useCallback } from "react";
+import React, { useMemo, useRef, useState, useEffect, useCallback , useRef} from "react";
 
 /* ─────────────────────── PARTICLE FIELD ─────────────────────── */
 function ParticleField() {
-  const canvasRef = useRef(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -251,7 +251,7 @@ export default function Page() {
   const [response, setResponse] = useState("");
   const [showResponse, setShowResponse] = useState(false);
   const [streamText, setStreamText] = useState("");
-  const inputRef = useRef(null);
+  const inputRef = useRef<HTMLCanvasElement | null>(null);
 
   const rootCards = [
     { key: "website", title: "Build a Website", subtitle: "Precision-crafted digital experiences that captivate and convert at scale.", buildType: "website", next: "websiteKind" },
