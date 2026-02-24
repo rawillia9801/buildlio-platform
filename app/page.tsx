@@ -1,5 +1,22 @@
 "use client";
+
 import React, { useRef, useState, useEffect } from "react";
+import { Oxanium, Share_Tech_Mono } from "next/font/google";
+
+/* ✅ Vercel/Next-safe font loading (replaces @import in styled-jsx) */
+const oxanium = Oxanium({
+  subsets: ["latin"],
+  weight: ["300", "400", "600", "700", "800"],
+  display: "swap",
+  variable: "--font-sans",
+});
+
+const shareTechMono = Share_Tech_Mono({
+  subsets: ["latin"],
+  weight: ["400"],
+  display: "swap",
+  variable: "--font-mono",
+});
 
 /* ─────────────────────── TYPES ─────────────────────── */
 type Particle = {
@@ -49,6 +66,7 @@ function ParticleField() {
     resize();
     window.addEventListener("resize", resize);
 
+    // (kept) initial spawn values as you provided
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       particles.push({
         x: Math.random() * 1920,
@@ -472,7 +490,8 @@ When responding:
 Format your response with clear sections using markdown headers. Be thorough but scannable.`;
 
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      /* ✅ Vercel-safe: call your own server route (no browser → Anthropic direct) */
+      const res = await fetch("/api/buildlio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -480,14 +499,17 @@ Format your response with clear sections using markdown headers. Be thorough but
           max_tokens: 1000,
           system: systemPrompt,
           messages: [{ role: "user", content: input }],
-          stream: false,
         }),
       });
 
-      const data = await res.json();
-      const full: string = data.content?.[0]?.text || "Neural link established. Processing...";
+      const data: { text?: string; error?: string } = await res.json();
 
-      // Simulate streaming for effect
+      const full =
+        data.text ||
+        data.error ||
+        "Neural link established. Processing...";
+
+      // Simulate streaming for effect (kept)
       let i = 0;
       const iv = setInterval(() => {
         if (i < full.length) {
@@ -514,10 +536,8 @@ Format your response with clear sections using markdown headers. Be thorough but
   };
 
   return (
-    <main className="bl-root">
+    <main className={`bl-root ${oxanium.variable} ${shareTechMono.variable}`}>
       <style jsx global>{`
-        @import url('https://fonts.googleapis.com/css2?family=Oxanium:wght@300;400;600;700;800&family=Share+Tech+Mono&display=swap');
-
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
         :root {
@@ -538,7 +558,7 @@ Format your response with clear sections using markdown headers. Be thorough but
           min-height: 100vh;
           background: var(--bg);
           color: var(--text);
-          font-family: 'Oxanium', sans-serif;
+          font-family: var(--font-sans), sans-serif;
           overflow-x: hidden;
           position: relative;
         }
@@ -589,7 +609,7 @@ Format your response with clear sections using markdown headers. Be thorough but
           border: 1px solid rgba(0,245,255,0.3);
           border-radius: 12px;
           padding: 24px 28px;
-          font-family: 'Share Tech Mono', monospace;
+          font-family: var(--font-mono), monospace;
           font-size: 13px;
           transition: opacity 0.6s ease, transform 0.6s ease;
           box-shadow: 0 0 80px rgba(0,245,255,0.08), inset 0 0 40px rgba(0,245,255,0.02);
@@ -739,6 +759,12 @@ Format your response with clear sections using markdown headers. Be thorough but
           transform: translateY(-50%);
           animation: equatorSpin 4s ease-in-out infinite;
         }
+        /* ✅ missing keyframes (harmless in dev, but tighten for prod) */
+        @keyframes equatorSpin {
+          0%,100% { opacity: 0.5; }
+          50% { opacity: 1; }
+        }
+
         .meridian {
           position: absolute;
           left: 50%; top: -10%; bottom: -10%;
@@ -778,7 +804,7 @@ Format your response with clear sections using markdown headers. Be thorough but
         /* Intro text */
         .intro-taglines { display: flex; flex-direction: column; align-items: center; gap: 20px; }
         .intro-badge {
-          font-family: 'Share Tech Mono', monospace;
+          font-family: var(--font-mono), monospace;
           font-size: 11px;
           letter-spacing: 4px;
           color: var(--g);
@@ -789,13 +815,9 @@ Format your response with clear sections using markdown headers. Be thorough but
           animation: badgePulse 2s ease-in-out infinite;
         }
         @keyframes badgePulse { 0%,100% { opacity: 0.8; } 50% { opacity: 1; } }
-        .scan-text-wrap {
-          position: relative;
-          max-width: 700px;
-          text-align: center;
-        }
+        .scan-text-wrap { position: relative; max-width: 700px; text-align: center; }
         .scan-text {
-          font-family: 'Share Tech Mono', monospace;
+          font-family: var(--font-mono), monospace;
           font-size: 22px;
           line-height: 1.5;
           color: var(--text);
@@ -825,7 +847,7 @@ Format your response with clear sections using markdown headers. Be thorough but
         /* HUD corners on intro */
         .hud-corner {
           position: absolute;
-          font-family: 'Share Tech Mono', monospace;
+          font-family: var(--font-mono), monospace;
           font-size: 10px;
           letter-spacing: 2px;
           color: rgba(0,245,255,0.4);
@@ -849,7 +871,7 @@ Format your response with clear sections using markdown headers. Be thorough but
           display: flex;
           align-items: center;
           padding: 0 28px;
-          font-family: 'Share Tech Mono', monospace;
+          font-family: var(--font-mono), monospace;
           font-size: 12px;
           letter-spacing: 1.5px;
           color: var(--muted);
@@ -870,7 +892,6 @@ Format your response with clear sections using markdown headers. Be thorough but
         .hud-tag { color: var(--muted); font-size: 11px; }
         .hud-val { color: var(--c); font-size: 11px; margin-left: 6px; }
 
-        /* ── Main layout ── */
         .bl-wrap {
           position: relative;
           z-index: 10;
@@ -879,7 +900,6 @@ Format your response with clear sections using markdown headers. Be thorough but
           padding: 76px 28px 160px;
         }
 
-        /* ── Stage shell ── */
         .bl-stage-shell {
           background: rgba(10,10,26,0.85);
           border: 1px solid rgba(0,245,255,0.2);
@@ -898,7 +918,7 @@ Format your response with clear sections using markdown headers. Be thorough but
           background: rgba(0,245,255,0.02);
         }
         .stage-breadcrumb {
-          font-family: 'Share Tech Mono', monospace;
+          font-family: var(--font-mono), monospace;
           font-size: 11px;
           letter-spacing: 3px;
           color: rgba(0,245,255,0.6);
@@ -907,7 +927,7 @@ Format your response with clear sections using markdown headers. Be thorough but
           background: none;
           border: 1px solid rgba(0,245,255,0.25);
           color: var(--muted);
-          font-family: 'Share Tech Mono', monospace;
+          font-family: var(--font-mono), monospace;
           font-size: 11px;
           letter-spacing: 1.5px;
           padding: 6px 16px;
@@ -920,9 +940,7 @@ Format your response with clear sections using markdown headers. Be thorough but
           color: var(--c);
           box-shadow: 0 0 20px rgba(0,245,255,0.15);
         }
-        .stage-body {
-          padding: 32px 28px 24px;
-        }
+        .stage-body { padding: 32px 28px 24px; }
         .stage-title {
           font-size: 32px;
           font-weight: 700;
@@ -933,7 +951,6 @@ Format your response with clear sections using markdown headers. Be thorough but
         }
         .stage-sub { color: var(--muted); font-size: 15px; }
 
-        /* ── Cards ── */
         .bl-grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -1008,7 +1025,6 @@ Format your response with clear sections using markdown headers. Be thorough but
           line-height: 1.5;
         }
 
-        /* ── Response panel ── */
         .response-panel {
           background: rgba(10,10,26,0.92);
           border: 1px solid rgba(0,245,255,0.2);
@@ -1039,7 +1055,7 @@ Format your response with clear sections using markdown headers. Be thorough but
           animation: pipBeat 1.5s ease-in-out infinite;
         }
         .response-label {
-          font-family: 'Share Tech Mono', monospace;
+          font-family: var(--font-mono), monospace;
           font-size: 11px;
           letter-spacing: 3px;
           color: rgba(0,245,255,0.6);
@@ -1057,7 +1073,6 @@ Format your response with clear sections using markdown headers. Be thorough but
         .response-body::-webkit-scrollbar-track { background: transparent; }
         .response-body::-webkit-scrollbar-thumb { background: rgba(0,245,255,0.2); border-radius: 4px; }
 
-        /* ── Bottom command bar ── */
         .bl-command-bar {
           position: fixed;
           bottom: 0; left: 0; right: 0;
@@ -1076,7 +1091,7 @@ Format your response with clear sections using markdown headers. Be thorough but
           gap: 14px;
         }
         .command-prompt {
-          font-family: 'Share Tech Mono', monospace;
+          font-family: var(--font-mono), monospace;
           font-size: 17px;
           color: var(--c);
           flex-shrink: 0;
@@ -1087,7 +1102,7 @@ Format your response with clear sections using markdown headers. Be thorough but
           background: rgba(4,4,12,0.9);
           border: 1px solid rgba(0,245,255,0.3);
           color: var(--text);
-          font-family: 'Share Tech Mono', monospace;
+          font-family: var(--font-mono), monospace;
           font-size: 15px;
           padding: 14px 20px;
           border-radius: 14px;
@@ -1102,7 +1117,7 @@ Format your response with clear sections using markdown headers. Be thorough but
         .command-btn {
           background: linear-gradient(90deg, var(--c), var(--v));
           color: #04040c;
-          font-family: 'Oxanium', sans-serif;
+          font-family: var(--font-sans), sans-serif;
           font-weight: 800;
           font-size: 14px;
           letter-spacing: 2px;
@@ -1121,12 +1136,7 @@ Format your response with clear sections using markdown headers. Be thorough but
         }
         .command-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
-        /* Loading animation */
-        .thinking-dots {
-          display: inline-flex;
-          gap: 4px;
-          align-items: center;
-        }
+        .thinking-dots { display: inline-flex; gap: 4px; align-items: center; }
         .thinking-dots span {
           width: 6px; height: 6px;
           border-radius: 50%;
@@ -1140,7 +1150,6 @@ Format your response with clear sections using markdown headers. Be thorough but
           50% { transform: translateY(-5px); opacity: 1; }
         }
 
-        /* Fade out intro */
         .fade-veil {
           position: fixed;
           inset: 0;
@@ -1152,7 +1161,6 @@ Format your response with clear sections using markdown headers. Be thorough but
         }
         @keyframes veilFade { to { opacity: 1; } }
 
-        /* Scrollbar global */
         * { scrollbar-width: thin; scrollbar-color: rgba(0,245,255,0.2) transparent; }
       `}</style>
 
@@ -1265,6 +1273,7 @@ Format your response with clear sections using markdown headers. Be thorough but
                 placeholder="Describe the complex system you want to architect..."
                 className="command-input"
                 disabled={isLoading}
+                type="text"
               />
               <button className="command-btn" type="submit" disabled={!input.trim() || isLoading}>
                 {isLoading ? "PROCESSING..." : "EXECUTE ⚡"}
