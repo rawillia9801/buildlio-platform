@@ -10,6 +10,7 @@ function ParticleField() {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
+    if (!ctx) return;
     let raf: number | null = null;
     let W = 0, H = 0;
     const particles: Particle[] = [];
@@ -253,7 +254,7 @@ export default function Page() {
   const [response, setResponse] = useState("");
   const [showResponse, setShowResponse] = useState(false);
   const [streamText, setStreamText] = useState("");
-  const inputRef = useRef<HTMLCanvasElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const rootCards = [
     { key: "website", title: "Build a Website", subtitle: "Precision-crafted digital experiences that captivate and convert at scale.", buildType: "website", next: "websiteKind" },
