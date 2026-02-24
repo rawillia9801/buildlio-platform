@@ -1,6 +1,8 @@
 "use client";
 import React, { useMemo, useRef, useState, useEffect, useCallback } from "react";
 
+type Particle = { x: number; y: number; vx: number; vy: number; r: number; alpha: number; hue: number };
+
 /* ─────────────────────── PARTICLE FIELD ─────────────────────── */
 function ParticleField() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -10,7 +12,7 @@ function ParticleField() {
     const ctx = canvas.getContext("2d");
     let raf: number | null = null;
     let W = 0, H = 0;
-    const particles = [];
+    const particles: Particle[] = [];
     const PARTICLE_COUNT = 90;
 
     function resize() {
