@@ -12,6 +12,7 @@ function ParticleField() {
     const c = canvas;
     const ctx = c.getContext("2d");
     if (!ctx) return;
+    const g = ctx;
     let raf: number | null = null;
     let W = 0, H = 0;
     const particles: Particle[] = [];
@@ -37,7 +38,7 @@ function ParticleField() {
     }
 
     function draw() {
-      ctx.clearRect(0, 0, W, H);
+      g.clearRect(0, 0, W, H);
       // connections
       for (let i = 0; i < particles.length; i++) {
         for (let j = i + 1; j < particles.length; j++) {
@@ -45,12 +46,12 @@ function ParticleField() {
           const dy = particles[i].y - particles[j].y;
           const d = Math.sqrt(dx * dx + dy * dy);
           if (d < 120) {
-            ctx.beginPath();
-            ctx.moveTo(particles[i].x, particles[i].y);
-            ctx.lineTo(particles[j].x, particles[j].y);
-            ctx.strokeStyle = `rgba(0,245,255,${(1 - d / 120) * 0.12})`;
-            ctx.lineWidth = 0.5;
-            ctx.stroke();
+            g.beginPath();
+            g.moveTo(particles[i].x, particles[i].y);
+            g.lineTo(particles[j].x, particles[j].y);
+            g.strokeStyle = `rgba(0,245,255,${(1 - d / 120) * 0.12})`;
+            g.lineWidth = 0.5;
+            g.stroke();
           }
         }
       }
@@ -62,10 +63,10 @@ function ParticleField() {
         if (p.x > W) p.x = 0;
         if (p.y < 0) p.y = H;
         if (p.y > H) p.y = 0;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fillStyle = `hsla(${p.hue},100%,75%,${p.alpha})`;
-        ctx.fill();
+        g.beginPath();
+        g.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        g.fillStyle = `hsla(${p.hue},100%,75%,${p.alpha})`;
+        g.fill();
       }
       raf = requestAnimationFrame(draw);
     }
