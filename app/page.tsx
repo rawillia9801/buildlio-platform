@@ -1,26 +1,50 @@
 "use client";
-import React, { useMemo, useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect } from "react";
 
-type Particle = { x: number; y: number; vx: number; vy: number; r: number; alpha: number; hue: number };
+/* ─────────────────────── TYPES ─────────────────────── */
+type Particle = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  r: number;
+  alpha: number;
+  hue: number;
+};
+
+type BuildType = "website" | "agent" | "store" | "document" | "app" | "other";
+type Stage = "root" | "documentKind" | "websiteKind" | "agentKind" | "storeKind" | "appKind";
+type KindStage = Exclude<Stage, "root">;
+
+type Card = {
+  key: string;
+  title: string;
+  subtitle: string;
+  buildType: BuildType;
+  next?: Stage;
+};
 
 /* ─────────────────────── PARTICLE FIELD ─────────────────────── */
 function ParticleField() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const c = canvas;
-    const ctx = c.getContext("2d");
+
+    const ctx = canvas.getContext("2d");
     if (!ctx) return;
-    const g = ctx;
+
     let raf: number | null = null;
-    let W = 0, H = 0;
+    let W = 0;
+    let H = 0;
+
     const particles: Particle[] = [];
     const PARTICLE_COUNT = 90;
 
     function resize() {
-      W = c.width = window.innerWidth;
-      H = c.height = window.innerHeight;
+      W = canvas.width = window.innerWidth;
+      H = canvas.height = window.innerHeight;
     }
     resize();
     window.addEventListener("resize", resize);
@@ -38,7 +62,8 @@ function ParticleField() {
     }
 
     function draw() {
-      g.clearRect(0, 0, W, H);
+      ctx.clearRect(0, 0, W, H);
+
       // connections
       for (let i = 0; i < particles.length; i++) {
         for (let j = i + 1; j < particles.length; j++) {
@@ -46,15 +71,16 @@ function ParticleField() {
           const dy = particles[i].y - particles[j].y;
           const d = Math.sqrt(dx * dx + dy * dy);
           if (d < 120) {
-            g.beginPath();
-            g.moveTo(particles[i].x, particles[i].y);
-            g.lineTo(particles[j].x, particles[j].y);
-            g.strokeStyle = `rgba(0,245,255,${(1 - d / 120) * 0.12})`;
-            g.lineWidth = 0.5;
-            g.stroke();
+            ctx.beginPath();
+            ctx.moveTo(particles[i].x, particles[i].y);
+            ctx.lineTo(particles[j].x, particles[j].y);
+            ctx.strokeStyle = `rgba(0,245,255,${(1 - d / 120) * 0.12})`;
+            ctx.lineWidth = 0.5;
+            ctx.stroke();
           }
         }
       }
+
       // dots
       for (const p of particles) {
         p.x += p.vx;
@@ -63,17 +89,30 @@ function ParticleField() {
         if (p.x > W) p.x = 0;
         if (p.y < 0) p.y = H;
         if (p.y > H) p.y = 0;
-        g.beginPath();
-        g.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        g.fillStyle = `hsla(${p.hue},100%,75%,${p.alpha})`;
-        g.fill();
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = `hsla(${p.hue},100%,75%,${p.alpha})`;
+        ctx.fill();
       }
+
       raf = requestAnimationFrame(draw);
     }
+
     draw();
-    return () => { if (raf !== null) cancelAnimationFrame(raf); window.removeEventListener("resize", resize); };
+
+    return () => {
+      if (raf !== null) cancelAnimationFrame(raf);
+      window.removeEventListener("resize", resize);
+    };
   }, []);
-  return <canvas ref={canvasRef} style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none" }} />;
+
+  return (
+    <canvas
+      ref={canvasRef}
+      style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none" }}
+    />
+  );
 }
 
 /* ─────────────────────── HOLOGRAPHIC CORE ─────────────────────── */
@@ -81,19 +120,29 @@ function HoloCore({ activated }: { activated: boolean }) {
   return (
     <div className="holo-wrap">
       {/* Outer scanner rings */}
-      {[1,2,3,4,5].map(i => (
+      {[1, 2, 3, 4, 5].map((i) => (
         <div key={i} className={`scanner-ring sr-${i}`} />
       ))}
 
       {/* Hexagonal frame */}
       <div className="hex-frame">
         <svg viewBox="0 0 200 200" width="200" height="200">
-          <polygon points="100,10 185,55 185,145 100,190 15,145 15,55"
-            fill="none" stroke="rgba(0,245,255,0.35)" strokeWidth="1"
-            strokeDasharray="8 4" className="hex-spin" />
-          <polygon points="100,25 172,66 172,134 100,175 28,134 28,66"
-            fill="none" stroke="rgba(168,85,247,0.25)" strokeWidth="0.5"
-            strokeDasharray="4 8" className="hex-spin-rev" />
+          <polygon
+            points="100,10 185,55 185,145 100,190 15,145 15,55"
+            fill="none"
+            stroke="rgba(0,245,255,0.35)"
+            strokeWidth="1"
+            strokeDasharray="8 4"
+            className="hex-spin"
+          />
+          <polygon
+            points="100,25 172,66 172,134 100,175 28,134 28,66"
+            fill="none"
+            stroke="rgba(168,85,247,0.25)"
+            strokeWidth="0.5"
+            strokeDasharray="4 8"
+            className="hex-spin-rev"
+          />
         </svg>
       </div>
 
@@ -110,22 +159,46 @@ function HoloCore({ activated }: { activated: boolean }) {
       </div>
 
       {/* Orbital dots */}
-      {[0,1,2,3,4,5].map(i => (
+      {[0, 1, 2, 3, 4, 5].map((i) => (
         <div key={i} className={`orb-dot od-${i}`} />
       ))}
 
       {/* Data arcs */}
       <svg className="data-arcs" viewBox="0 0 300 300" width="300" height="300">
-        <circle cx="150" cy="150" r="120" fill="none" stroke="rgba(0,245,255,0.15)" strokeWidth="1"
-          strokeDasharray="20 8" className="arc-spin" />
-        <circle cx="150" cy="150" r="100" fill="none" stroke="rgba(168,85,247,0.2)" strokeWidth="1"
-          strokeDasharray="12 16" className="arc-spin-rev" />
-        <circle cx="150" cy="150" r="80" fill="none" stroke="rgba(0,245,255,0.1)" strokeWidth="0.5"
-          strokeDasharray="6 20" className="arc-spin" />
+        <circle
+          cx="150"
+          cy="150"
+          r="120"
+          fill="none"
+          stroke="rgba(0,245,255,0.15)"
+          strokeWidth="1"
+          strokeDasharray="20 8"
+          className="arc-spin"
+        />
+        <circle
+          cx="150"
+          cy="150"
+          r="100"
+          fill="none"
+          stroke="rgba(168,85,247,0.2)"
+          strokeWidth="1"
+          strokeDasharray="12 16"
+          className="arc-spin-rev"
+        />
+        <circle
+          cx="150"
+          cy="150"
+          r="80"
+          fill="none"
+          stroke="rgba(0,245,255,0.1)"
+          strokeWidth="0.5"
+          strokeDasharray="6 20"
+          className="arc-spin"
+        />
       </svg>
 
       {/* Corner brackets */}
-      {["tl","tr","bl","br"].map(pos => (
+      {["tl", "tr", "bl", "br"].map((pos) => (
         <div key={pos} className={`bracket br-${pos}`} />
       ))}
     </div>
@@ -133,22 +206,25 @@ function HoloCore({ activated }: { activated: boolean }) {
 }
 
 /* ─────────────────────── SCANLINE TEXT ─────────────────────── */
-function ScanText({ text, done }) {
+function ScanText({ text, done }: { text: string; done: boolean }) {
   return (
     <div className="scan-text-wrap">
-      <div className="scan-text">{text}<span className={`cursor-blink ${done ? "hidden" : ""}`}>█</span></div>
+      <div className="scan-text">
+        {text}
+        <span className={`cursor-blink ${done ? "hidden" : ""}`}>█</span>
+      </div>
       <div className="scan-overlay" />
     </div>
   );
 }
 
 /* ─────────────────────── INTRO SEQUENCE ─────────────────────── */
-function IntroSequence({ onComplete }) {
-  const [phase, setPhase] = useState(0); // 0=boot, 1=core, 2=type, 3=done
-  const [text, setText] = useState("");
-  const [bootLines, setBootLines] = useState([]);
+function IntroSequence({ onComplete }: { onComplete: () => void }) {
+  const [phase, setPhase] = useState<number>(0); // 0=boot, 1=core, 2=type, 3=done
+  const [text, setText] = useState<string>("");
+  const [bootLines, setBootLines] = useState<string[]>([]);
 
-  const bootSeq = [
+  const bootSeq: string[] = [
     "INITIALIZING NEURAL SUBSTRATE...",
     "LOADING COGNITIVE ARCHITECTURE v9.0...",
     "CALIBRATING QUANTUM INFERENCE ENGINE...",
@@ -157,13 +233,14 @@ function IntroSequence({ onComplete }) {
     "ALL SYSTEMS NOMINAL. BUILDLIO ONLINE.",
   ];
 
-  const fullText = "Hi. I'm Buildlio.\n\nA high-intelligence platform engineered to execute\ncomplex, ambitious visions with precision and speed.\n\nWhat extraordinary system shall we build today?";
+  const fullText =
+    "Hi. I'm Buildlio.\n\nA high-intelligence platform engineered to execute\ncomplex, ambitious visions with precision and speed.\n\nWhat extraordinary system shall we build today?";
 
   useEffect(() => {
     // Phase 0: boot lines
     let lineIdx = 0;
     const bootInterval = setInterval(() => {
-      setBootLines(prev => [...prev, bootSeq[lineIdx]]);
+      setBootLines((prev) => [...prev, bootSeq[lineIdx]]);
       lineIdx++;
       if (lineIdx >= bootSeq.length) {
         clearInterval(bootInterval);
@@ -178,7 +255,7 @@ function IntroSequence({ onComplete }) {
     let i = 0;
     const iv = setInterval(() => {
       if (i < fullText.length) {
-        setText(prev => prev + fullText.charAt(i));
+        setText((prev) => prev + fullText.charAt(i));
         i++;
       } else {
         clearInterval(iv);
@@ -187,7 +264,7 @@ function IntroSequence({ onComplete }) {
       }
     }, 28);
     return () => clearInterval(iv);
-  }, [phase]);
+  }, [phase, onComplete]);
 
   useEffect(() => {
     if (phase === 1) {
@@ -233,8 +310,8 @@ function IntroSequence({ onComplete }) {
   );
 }
 
-/* ─────────────────────── TYPES ─────────────────────── */
-const CARD_ICONS = {
+/* ─────────────────────── ICONS ─────────────────────── */
+const CARD_ICONS: Record<string, string> = {
   website: "⬡",
   agent: "◈",
   store: "◎",
@@ -245,29 +322,64 @@ const CARD_ICONS = {
 
 /* ─────────────────────── MAIN PAGE ─────────────────────── */
 export default function Page() {
-  const [introComplete, setIntroComplete] = useState(false);
-  const [fadeOut, setFadeOut] = useState(false);
-  const [stage, setStage] = useState("root");
-  const [buildType, setBuildType] = useState("website");
-  const [pressedKey, setPressedKey] = useState(null);
-  const [stageKey, setStageKey] = useState(0);
-  const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [response, setResponse] = useState("");
-  const [showResponse, setShowResponse] = useState(false);
-  const [streamText, setStreamText] = useState("");
+  const [introComplete, setIntroComplete] = useState<boolean>(false);
+  const [fadeOut, setFadeOut] = useState<boolean>(false);
+  const [stage, setStage] = useState<Stage>("root");
+  const [buildType, setBuildType] = useState<BuildType>("website");
+  const [pressedKey, setPressedKey] = useState<string | null>(null);
+  const [stageKey, setStageKey] = useState<number>(0);
+  const [input, setInput] = useState<string>("");
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [showResponse, setShowResponse] = useState<boolean>(false);
+  const [streamText, setStreamText] = useState<string>("");
+
   const inputRef = useRef<HTMLInputElement | null>(null);
 
-  const rootCards = [
-    { key: "website", title: "Build a Website", subtitle: "Precision-crafted digital experiences that captivate and convert at scale.", buildType: "website", next: "websiteKind" },
-    { key: "agent", title: "Create an AI Agent", subtitle: "Autonomous intelligence for operations, support, sales, and strategic analysis.", buildType: "agent", next: "agentKind" },
-    { key: "store", title: "Launch an Online Store", subtitle: "Conversion-optimized commerce with enterprise-grade checkout systems.", buildType: "store", next: "storeKind" },
-    { key: "document", title: "Generate a Document", subtitle: "Architecturally perfect contracts, proposals, and technical specifications.", buildType: "document", next: "documentKind" },
-    { key: "app", title: "Build a Web App", subtitle: "Sophisticated dashboards, internal tools, and workflow automation engines.", buildType: "app", next: "appKind" },
-    { key: "other", title: "Something Else", subtitle: "A truly custom system. Describe your vision and I'll engineer it precisely.", buildType: "other" },
+  const rootCards: Card[] = [
+    {
+      key: "website",
+      title: "Build a Website",
+      subtitle: "Precision-crafted digital experiences that captivate and convert at scale.",
+      buildType: "website",
+      next: "websiteKind",
+    },
+    {
+      key: "agent",
+      title: "Create an AI Agent",
+      subtitle: "Autonomous intelligence for operations, support, sales, and strategic analysis.",
+      buildType: "agent",
+      next: "agentKind",
+    },
+    {
+      key: "store",
+      title: "Launch an Online Store",
+      subtitle: "Conversion-optimized commerce with enterprise-grade checkout systems.",
+      buildType: "store",
+      next: "storeKind",
+    },
+    {
+      key: "document",
+      title: "Generate a Document",
+      subtitle: "Architecturally perfect contracts, proposals, and technical specifications.",
+      buildType: "document",
+      next: "documentKind",
+    },
+    {
+      key: "app",
+      title: "Build a Web App",
+      subtitle: "Sophisticated dashboards, internal tools, and workflow automation engines.",
+      buildType: "app",
+      next: "appKind",
+    },
+    {
+      key: "other",
+      title: "Something Else",
+      subtitle: "A truly custom system. Describe your vision and I'll engineer it precisely.",
+      buildType: "other",
+    },
   ];
 
-  const kindCards = {
+  const kindCards: Record<KindStage, Card[]> = {
     documentKind: [
       { key: "doc_personal", title: "Personal", subtitle: "Letters, agreements, creative briefs — executed with precision.", buildType: "document" },
       { key: "doc_business", title: "Business", subtitle: "SOPs, proposals, investor decks — professionally structured.", buildType: "document" },
@@ -305,25 +417,27 @@ export default function Page() {
     ],
   };
 
-  const cards = stage === "root" ? rootCards : (kindCards[stage] || rootCards);
+  const cards: Card[] = stage === "root" ? rootCards : kindCards[stage as KindStage];
 
-  const stageTitle = {
+  const stageTitle: Record<Stage, string> = {
     root: "What ambitious system shall we construct together?",
     documentKind: "What document architecture do you need engineered?",
     websiteKind: "What kind of website shall we architect?",
     agentKind: "What role should your autonomous intelligence fulfill?",
     storeKind: "What commerce system are we deploying?",
     appKind: "What powerful application shall we build?",
-  }[stage] || "";
+  };
 
-  function handleCardClick(card) {
+  function handleCardClick(card: Card) {
     setPressedKey(card.key);
     setBuildType(card.buildType);
+
     setTimeout(() => {
       setPressedKey(null);
+
       if (card.next) {
         setStage(card.next);
-        setStageKey(k => k + 1);
+        setStageKey((k) => k + 1);
         setTimeout(() => inputRef.current?.focus(), 160);
       } else {
         setInput(seedFromSelection(card));
@@ -332,9 +446,10 @@ export default function Page() {
     }, 200);
   }
 
-  async function handleSubmit(e) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
+
     setIsLoading(true);
     setShowResponse(true);
     setStreamText("");
@@ -368,9 +483,10 @@ Format your response with clear sections using markdown headers. Be thorough but
           stream: false,
         }),
       });
+
       const data = await res.json();
-      const full = data.content?.[0]?.text || "Neural link established. Processing...";
-      
+      const full: string = data.content?.[0]?.text || "Neural link established. Processing...";
+
       // Simulate streaming for effect
       let i = 0;
       const iv = setInterval(() => {
@@ -383,7 +499,7 @@ Format your response with clear sections using markdown headers. Be thorough but
           setIsLoading(false);
         }
       }, 12);
-    } catch (err) {
+    } catch {
       setStreamText("Neural link disrupted. Please verify API connectivity and retry.");
       setIsLoading(false);
     }
@@ -391,7 +507,10 @@ Format your response with clear sections using markdown headers. Be thorough but
 
   const handleIntroComplete = () => {
     setFadeOut(true);
-    setTimeout(() => { setIntroComplete(true); setFadeOut(false); }, 700);
+    setTimeout(() => {
+      setIntroComplete(true);
+      setFadeOut(false);
+    }, 700);
   };
 
   return (
@@ -1046,7 +1165,9 @@ Format your response with clear sections using markdown headers. Be thorough but
             <div className="status-pip" />
             <span className="hud-brand">BUILDLIO</span>
             <span className="hud-sep">•</span>
-            <span style={{ color: "rgba(0,245,255,0.5)", fontSize: 11, letterSpacing: "1px" }}>NEURAL CORE ONLINE</span>
+            <span style={{ color: "rgba(0,245,255,0.5)", fontSize: 11, letterSpacing: "1px" }}>
+              NEURAL CORE ONLINE
+            </span>
             <div className="hud-meta">
               <span>
                 <span className="hud-tag">MODE:</span>
@@ -1066,23 +1187,33 @@ Format your response with clear sections using markdown headers. Be thorough but
             <div className="bl-stage-shell">
               <div className="stage-top">
                 <div className="stage-breadcrumb">
-                  {stage === "root" ? "NEXUS://ROOT" : `NEXUS:// ${stage.replace("Kind","").toUpperCase()}`}
+                  {stage === "root" ? "NEXUS://ROOT" : `NEXUS:// ${stage.replace("Kind", "").toUpperCase()}`}
                 </div>
                 {stage !== "root" && (
-                  <button className="stage-back" onClick={() => { setStage("root"); setStageKey(k => k+1); setTimeout(() => inputRef.current?.focus(), 120); }}>
+                  <button
+                    className="stage-back"
+                    onClick={() => {
+                      setStage("root");
+                      setStageKey((k) => k + 1);
+                      setTimeout(() => inputRef.current?.focus(), 120);
+                    }}
+                    type="button"
+                  >
                     ← RETURN TO NEXUS
                   </button>
                 )}
               </div>
               <div className="stage-body">
-                <div className="stage-title">{stageTitle}</div>
-                <div className="stage-sub">Select a module to configure, or describe your exact vision in the command interface below.</div>
+                <div className="stage-title">{stageTitle[stage]}</div>
+                <div className="stage-sub">
+                  Select a module to configure, or describe your exact vision in the command interface below.
+                </div>
               </div>
             </div>
 
             {/* Cards */}
             <div key={stageKey} className="bl-grid">
-              {cards.map(c => (
+              {cards.map((c) => (
                 <button
                   key={c.key}
                   className={`bl-card ${pressedKey === c.key ? "pressed" : ""}`}
@@ -1109,7 +1240,9 @@ Format your response with clear sections using markdown headers. Be thorough but
                   <div className="response-label">BUILDLIO NEURAL OUTPUT</div>
                   {isLoading && (
                     <div className="thinking-dots" style={{ marginLeft: "auto" }}>
-                      <span /><span /><span />
+                      <span />
+                      <span />
+                      <span />
                     </div>
                   )}
                 </div>
@@ -1128,7 +1261,7 @@ Format your response with clear sections using markdown headers. Be thorough but
               <input
                 ref={inputRef}
                 value={input}
-                onChange={e => setInput(e.target.value)}
+                onChange={(e) => setInput(e.target.value)}
                 placeholder="Describe the complex system you want to architect..."
                 className="command-input"
                 disabled={isLoading}
@@ -1146,11 +1279,16 @@ Format your response with clear sections using markdown headers. Be thorough but
   );
 }
 
-function seedFromSelection(card) {
-  if (card.buildType === "document") return "Engineer a professional document. Specify: purpose, target audience, tone, and required sections.";
-  if (card.buildType === "agent") return "Design an autonomous AI agent. Define: primary mission, available tools, escalation triggers, and critical guardrails.";
-  if (card.buildType === "website") return "Architect a website. Specify: personal or enterprise scope, key pages, performance targets, and desired aesthetic.";
-  if (card.buildType === "store") return "Deploy an ecommerce system. Define: product type, fulfillment model, payment methods, and compliance requirements.";
-  if (card.buildType === "app") return "Build a web application. Define: target users, core workflows, data requirements, and integration needs.";
+function seedFromSelection(card: Pick<Card, "buildType">) {
+  if (card.buildType === "document")
+    return "Engineer a professional document. Specify: purpose, target audience, tone, and required sections.";
+  if (card.buildType === "agent")
+    return "Design an autonomous AI agent. Define: primary mission, available tools, escalation triggers, and critical guardrails.";
+  if (card.buildType === "website")
+    return "Architect a website. Specify: personal or enterprise scope, key pages, performance targets, and desired aesthetic.";
+  if (card.buildType === "store")
+    return "Deploy an ecommerce system. Define: product type, fulfillment model, payment methods, and compliance requirements.";
+  if (card.buildType === "app")
+    return "Build a web application. Define: target users, core workflows, data requirements, and integration needs.";
   return "Describe your vision in full detail. I am ready to architect something extraordinary.";
 }
