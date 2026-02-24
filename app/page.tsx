@@ -46,10 +46,11 @@ function ParticleField() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
+    // ✅ capture a non-null element ONCE for TS + runtime stability
+    const canvasEl = canvasRef.current;
+    if (!canvasEl) return;
 
-    const ctx = canvas.getContext("2d");
+    const ctx = canvasEl.getContext("2d");
     if (!ctx) return;
 
     let raf: number | null = null;
@@ -60,8 +61,9 @@ function ParticleField() {
     const PARTICLE_COUNT = 90;
 
     function resize() {
-      W = canvas.width = window.innerWidth;
-      H = canvas.height = window.innerHeight;
+      // ✅ use canvasEl (non-null) inside nested fn
+      W = canvasEl.width = window.innerWidth;
+      H = canvasEl.height = window.innerHeight;
     }
     resize();
     window.addEventListener("resize", resize);
@@ -504,10 +506,7 @@ Format your response with clear sections using markdown headers. Be thorough but
 
       const data: { text?: string; error?: string } = await res.json();
 
-      const full =
-        data.text ||
-        data.error ||
-        "Neural link established. Processing...";
+      const full = data.text || data.error || "Neural link established. Processing...";
 
       // Simulate streaming for effect (kept)
       let i = 0;
