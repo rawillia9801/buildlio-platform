@@ -13,7 +13,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import TypewriterPrompt from "@/components/documents/TypewriterPrompt";
+import TypewriterPrompt from "@/components/documents/TempPrompt";
 import { DOC_CATEGORIES, type DocCategoryKey } from "@/lib/documents/categories";
 import { MOTIONS, type MotionTemplate } from "@/lib/documents/motions";
 
