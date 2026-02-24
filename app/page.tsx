@@ -9,7 +9,7 @@ function ParticleField() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     let raf: number | null = null;
-    let W, H;
+    let W = 0, H = 0;
     const particles = [];
     const PARTICLE_COUNT = 90;
 
