@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo, useRef, useState, useEffect, useCallback , useRef} from "react";
+import React, { useMemo, useRef, useState, useEffect, useCallback } from "react";
 
 /* ─────────────────────── PARTICLE FIELD ─────────────────────── */
 function ParticleField() {
