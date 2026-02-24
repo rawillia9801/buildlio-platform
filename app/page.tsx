@@ -77,7 +77,7 @@ function ParticleField() {
 }
 
 /* ─────────────────────── HOLOGRAPHIC CORE ─────────────────────── */
-function HoloCore({ activated }) {
+function HoloCore({ activated }: { activated: boolean }) {
   return (
     <div className="holo-wrap">
       {/* Outer scanner rings */}
