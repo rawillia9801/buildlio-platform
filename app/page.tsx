@@ -9,7 +9,8 @@ function ParticleField() {
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext("2d");
+    const c = canvas;
+    const ctx = c.getContext("2d");
     if (!ctx) return;
     let raf: number | null = null;
     let W = 0, H = 0;
@@ -17,8 +18,8 @@ function ParticleField() {
     const PARTICLE_COUNT = 90;
 
     function resize() {
-      W = canvas.width = window.innerWidth;
-      H = canvas.height = window.innerHeight;
+      W = c.width = window.innerWidth;
+      H = c.height = window.innerHeight;
     }
     resize();
     window.addEventListener("resize", resize);
