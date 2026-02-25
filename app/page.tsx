@@ -60,11 +60,12 @@ function ParticleField() {
     const particles: Particle[] = [];
     const PARTICLE_COUNT = 90;
 
-    function resize() {
-      // ✅ use canvasEl (non-null) inside nested fn
-      W = canvasEl.width = window.innerWidth;
-      H = canvasEl.height = window.innerHeight;
-    }
+   function resize() {
+  const c = canvasRef.current;
+  if (!c) return;
+  W = c.width = window.innerWidth;
+  H = c.height = window.innerHeight;
+}
     resize();
     window.addEventListener("resize", resize);
 
