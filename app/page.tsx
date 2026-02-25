@@ -46,13 +46,14 @@ function ParticleField() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
-    // ✅ capture a non-null element ONCE for TS + runtime stability
+    // ✅ capture non-null canvas once
     const canvasEl = canvasRef.current;
     if (!canvasEl) return;
 
+    // ✅ capture non-null ctx once (prevents "ctx possibly null" in strict builds)
     const ctxMaybe = canvasEl.getContext("2d");
-if (!ctxMaybe) return;
-const ctx = ctxMaybe; // ✅ ctx is now guaranteed non-null everywhere below
+    if (!ctxMaybe) return;
+    const ctx = ctxMaybe;
 
     let raf: number | null = null;
     let W = 0;
@@ -61,12 +62,12 @@ const ctx = ctxMaybe; // ✅ ctx is now guaranteed non-null everywhere below
     const particles: Particle[] = [];
     const PARTICLE_COUNT = 90;
 
-   function resize() {
-  const c = canvasRef.current;
-  if (!c) return;
-  W = c.width = window.innerWidth;
-  H = c.height = window.innerHeight;
-}
+    function resize() {
+      // ✅ use captured canvasEl (never null)
+      W = canvasEl.width = window.innerWidth;
+      H = canvasEl.height = window.innerHeight;
+    }
+
     resize();
     window.addEventListener("resize", resize);
 
@@ -403,37 +404,132 @@ export default function Page() {
 
   const kindCards: Record<KindStage, Card[]> = {
     documentKind: [
-      { key: "doc_personal", title: "Personal", subtitle: "Letters, agreements, creative briefs — executed with precision.", buildType: "document" },
-      { key: "doc_business", title: "Business", subtitle: "SOPs, proposals, investor decks — professionally structured.", buildType: "document" },
-      { key: "doc_legal", title: "Legal", subtitle: "Contracts, terms, compliance documents — airtight and clear.", buildType: "document" },
-      { key: "doc_marketing", title: "Marketing", subtitle: "Campaign assets, pitch decks, product messaging.", buildType: "document" },
-      { key: "doc_other", title: "Other", subtitle: "Any document you need engineered to perfection.", buildType: "document" },
+      {
+        key: "doc_personal",
+        title: "Personal",
+        subtitle: "Letters, agreements, creative briefs — executed with precision.",
+        buildType: "document",
+      },
+      {
+        key: "doc_business",
+        title: "Business",
+        subtitle: "SOPs, proposals, investor decks — professionally structured.",
+        buildType: "document",
+      },
+      {
+        key: "doc_legal",
+        title: "Legal",
+        subtitle: "Contracts, terms, compliance documents — airtight and clear.",
+        buildType: "document",
+      },
+      {
+        key: "doc_marketing",
+        title: "Marketing",
+        subtitle: "Campaign assets, pitch decks, product messaging.",
+        buildType: "document",
+      },
+      {
+        key: "doc_other",
+        title: "Other",
+        subtitle: "Any document you need engineered to perfection.",
+        buildType: "document",
+      },
     ],
     websiteKind: [
-      { key: "site_personal", title: "Personal", subtitle: "Portfolios, bios, and digital presences that command attention.", buildType: "website" },
-      { key: "site_business", title: "Business", subtitle: "Corporate sites engineered for trust, leads, and growth.", buildType: "website" },
-      { key: "site_landing", title: "Landing Page", subtitle: "High-conversion experiences with pixel-perfect design.", buildType: "website" },
-      { key: "site_portal", title: "Customer Portal", subtitle: "Secure, intuitive client and team workspaces.", buildType: "website" },
+      {
+        key: "site_personal",
+        title: "Personal",
+        subtitle: "Portfolios, bios, and digital presences that command attention.",
+        buildType: "website",
+      },
+      {
+        key: "site_business",
+        title: "Business",
+        subtitle: "Corporate sites engineered for trust, leads, and growth.",
+        buildType: "website",
+      },
+      {
+        key: "site_landing",
+        title: "Landing Page",
+        subtitle: "High-conversion experiences with pixel-perfect design.",
+        buildType: "website",
+      },
+      {
+        key: "site_portal",
+        title: "Customer Portal",
+        subtitle: "Secure, intuitive client and team workspaces.",
+        buildType: "website",
+      },
       { key: "site_other", title: "Other", subtitle: "Any website architecture you can imagine.", buildType: "website" },
     ],
     agentKind: [
-      { key: "agent_secretary", title: "Secretary (Ops)", subtitle: "Proactive scheduling, reminders, and execution intelligence.", buildType: "agent" },
-      { key: "agent_support", title: "Customer Support", subtitle: "24/7 intelligent resolution with escalation intelligence.", buildType: "agent" },
-      { key: "agent_sales", title: "Sales Assistant", subtitle: "Autonomous lead qualification and pipeline acceleration.", buildType: "agent" },
-      { key: "agent_inventory", title: "Inventory Manager", subtitle: "Real-time supply chain intelligence and optimization.", buildType: "agent" },
-      { key: "agent_other", title: "Other", subtitle: "Any specialized intelligence role you require.", buildType: "agent" },
+      {
+        key: "agent_secretary",
+        title: "Secretary (Ops)",
+        subtitle: "Proactive scheduling, reminders, and execution intelligence.",
+        buildType: "agent",
+      },
+      {
+        key: "agent_support",
+        title: "Customer Support",
+        subtitle: "24/7 intelligent resolution with escalation intelligence.",
+        buildType: "agent",
+      },
+      {
+        key: "agent_sales",
+        title: "Sales Assistant",
+        subtitle: "Autonomous lead qualification and pipeline acceleration.",
+        buildType: "agent",
+      },
+      {
+        key: "agent_inventory",
+        title: "Inventory Manager",
+        subtitle: "Real-time supply chain intelligence and optimization.",
+        buildType: "agent",
+      },
+      {
+        key: "agent_other",
+        title: "Other",
+        subtitle: "Any specialized intelligence role you require.",
+        buildType: "agent",
+      },
     ],
     storeKind: [
-      { key: "store_products", title: "Products Store", subtitle: "High-conversion ecommerce with advanced checkout flows.", buildType: "store" },
-      { key: "store_services", title: "Services + Payments", subtitle: "Booking, invoicing, and recurring revenue systems.", buildType: "store" },
-      { key: "store_subscriptions", title: "Subscriptions", subtitle: "Membership platforms with intelligent tier management.", buildType: "store" },
-      { key: "store_marketplace", title: "Marketplace", subtitle: "Multi-channel fulfillment and inventory synchronization.", buildType: "store" },
+      {
+        key: "store_products",
+        title: "Products Store",
+        subtitle: "High-conversion ecommerce with advanced checkout flows.",
+        buildType: "store",
+      },
+      {
+        key: "store_services",
+        title: "Services + Payments",
+        subtitle: "Booking, invoicing, and recurring revenue systems.",
+        buildType: "store",
+      },
+      {
+        key: "store_subscriptions",
+        title: "Subscriptions",
+        subtitle: "Membership platforms with intelligent tier management.",
+        buildType: "store",
+      },
+      {
+        key: "store_marketplace",
+        title: "Marketplace",
+        subtitle: "Multi-channel fulfillment and inventory synchronization.",
+        buildType: "store",
+      },
       { key: "store_other", title: "Other", subtitle: "Any commerce architecture you envision.", buildType: "store" },
     ],
     appKind: [
       { key: "app_dashboard", title: "Dashboard", subtitle: "Real-time analytics and command centers.", buildType: "app" },
       { key: "app_crm", title: "CRM / Pipeline", subtitle: "Intelligent sales and relationship management.", buildType: "app" },
-      { key: "app_inventory", title: "Inventory System", subtitle: "Enterprise-grade tracking and forecasting.", buildType: "app" },
+      {
+        key: "app_inventory",
+        title: "Inventory System",
+        subtitle: "Enterprise-grade tracking and forecasting.",
+        buildType: "app",
+      },
       { key: "app_portal", title: "Client Portal", subtitle: "Secure, beautiful collaboration environments.", buildType: "app" },
       { key: "app_other", title: "Other", subtitle: "Any custom internal or external application.", buildType: "app" },
     ],
@@ -714,7 +810,7 @@ Format your response with clear sections using markdown headers. Be thorough but
           width: 120px; height: 120px;
           border-radius: 50%;
           background: radial-gradient(circle at 38% 30%, #67e8f9 0%, #6366f1 45%, #1e0a3c 100%);
-          box-shadow: 
+          box-shadow:
             0 0 60px rgba(103,232,249,0.5),
             0 0 120px rgba(168,85,247,0.3),
             inset 0 0 50px rgba(255,255,255,0.08);
@@ -760,7 +856,6 @@ Format your response with clear sections using markdown headers. Be thorough but
           transform: translateY(-50%);
           animation: equatorSpin 4s ease-in-out infinite;
         }
-        /* ✅ missing keyframes (harmless in dev, but tighten for prod) */
         @keyframes equatorSpin {
           0%,100% { opacity: 0.5; }
           50% { opacity: 1; }
@@ -978,7 +1073,7 @@ Format your response with clear sections using markdown headers. Be thorough but
           pointer-events: none;
           border-radius: 18px;
         }
-        .bl-card:hover { 
+        .bl-card:hover {
           transform: translateY(-10px) scale(1.01);
           border-color: rgba(0,245,255,0.6);
           box-shadow: 0 28px 80px rgba(0,245,255,0.2), 0 8px 32px rgba(0,0,0,0.6);
