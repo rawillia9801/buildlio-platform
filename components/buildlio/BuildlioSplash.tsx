@@ -1,314 +1,168 @@
-/* FILE: components/buildlio/BuildioSplash.tsx
-White first paint → center binary ripple → type lines → show choices
-*/
 "use client";
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import type { BuildChoice } from "@/lib/buildlio-types";
-import { clamp, sleep } from "@/lib/buildlio-utils";
+import * as React from "react";
 
-export default function BuildlioSplash({ onSelect }: { onSelect: (choice: BuildChoice) => void }) {
-  // ✅ FIX: Separated the visual 'display' text from the strict lowercase 'value'
-  const choices: Array<{ display: string; value: BuildChoice; desc: string }> = [
-    { display: "Website", value: "website", desc: "A full professional website with pages, sections, and polish." },
-    { display: "Application", value: "app", desc: "A product-style build with screens, flow, and structure." },
-    { display: "Documents", value: "document", desc: "Letters, contracts, policies — clean and professional." },
-    { display: "Store", value: "store", desc: "A conversion-focused product & checkout experience." },
-    { display: "AI Agent", value: "agent", desc: "Autonomous intelligence for operations and support." },
-    { display: "Other", value: "other", desc: "Anything else — you describe it, I’ll shape it." },
-  ];
+type BuildType = "website" | "store" | "app" | "document";
 
-  const [phase, setPhase] = useState<0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9>(0);
+export type BuildlioSplashProps = {
+  onSelect: (buildType: BuildType) => void;
+  defaultChoice?: BuildType;
+};
 
-  const line1 = "Hi, I’m Buildlio.";
-  const line2 = "Your AI chat builder.";
-  const line3 = "Let’s turn your dream into a reality. What are we creating today?";
+const CARD: Array<{
+  key: BuildType;
+  title: string;
+  desc: string;
+  meta: string;
+  accent: string;
+}> = [
+  {
+    key: "website",
+    title: "WEBSITE",
+    desc: "Landing pages, multi-page sites, business presence",
+    meta: "SITE FORGE",
+    accent: "from-cyan-400 to-sky-500",
+  },
+  {
+    key: "store",
+    title: "STORE",
+    desc: "Products, checkout-ready structure, conversion sections",
+    meta: "COMMERCE NODE",
+    accent: "from-emerald-400 to-teal-500",
+  },
+  {
+    key: "app",
+    title: "APPLICATION",
+    desc: "Forms, intake flows, onboarding experience",
+    meta: "LOGIC LATTICE",
+    accent: "from-violet-400 to-purple-500",
+  },
+  {
+    key: "document",
+    title: "DOCUMENT",
+    desc: "Policies, contracts, guides, professional documents",
+    meta: "KNOWLEDGE FORGE",
+    accent: "from-rose-400 to-fuchsia-500",
+  },
+];
 
-  const [typed1, setTyped1] = useState("");
-  const [typed2, setTyped2] = useState("");
-  const [typed3, setTyped3] = useState("");
+export default function BuildlioSplash({ onSelect, defaultChoice = "website" }: BuildlioSplashProps) {
+  const [hovered, setHovered] = React.useState<BuildType | null>(null);
+  const [selected, setSelected] = React.useState<BuildType>(defaultChoice);
 
-  const [rippleOn, setRippleOn] = useState(false);
-  const [isExiting, setIsExiting] = useState(false);
-  const [sinkKey, setSinkKey] = useState<string | null>(null);
+  const active = hovered ?? selected;
 
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  const origin = useMemo(() => ({ x: 50, y: 50 }), []);
-  const [sploosh, setSploosh] = useState<{ x: number; y: number; active: boolean }>({
-    x: origin.x,
-    y: origin.y,
-    active: false,
-  });
-
-  async function typeLine(setter: (s: string) => void, full: string, msPerChar: number) {
-    for (let i = 1; i <= full.length; i++) {
-      setter(full.slice(0, i));
-      await sleep(msPerChar);
-    }
-  }
-
-  useEffect(() => {
-    let alive = true;
-
-    (async () => {
-      await sleep(650);
-      if (!alive) return;
-
-      setPhase(1);
-      setRippleOn(true);
-      await sleep(900);
-      if (!alive) return;
-
-      setPhase(2);
-      await typeLine(setTyped1, line1, 44);
-      if (!alive) return;
-
-      setPhase(3);
-      await sleep(980);
-      if (!alive) return;
-
-      setPhase(4);
-      await typeLine(setTyped2, line2, 40);
-      if (!alive) return;
-
-      setPhase(5);
-      await sleep(1100);
-      if (!alive) return;
-
-      setPhase(6);
-      await typeLine(setTyped3, line3, 28);
-      if (!alive) return;
-
-      setPhase(7);
-      await sleep(1400);
-      if (!alive) return;
-
-      setPhase(8);
-    })();
-
-    return () => {
-      alive = false;
-    };
-  }, []);
-
-  const handleChoiceClick = async (choice: BuildChoice, ev: React.MouseEvent<HTMLButtonElement>) => {
-    if (isExiting || phase < 8) return;
-
-    const rect = rootRef.current?.getBoundingClientRect();
-    const cx = rect ? ((ev.clientX - rect.left) / rect.width) * 100 : origin.x;
-    const cy = rect ? ((ev.clientY - rect.top) / rect.height) * 100 : origin.y;
-
-    setSinkKey(choice);
-    setSploosh({ x: clamp(cx, 6, 94), y: clamp(cy, 6, 94), active: true });
-
-    setPhase(9);
-    setIsExiting(true);
-
-    await sleep(880);
-    onSelect(choice);
+  const handleSelect = (type: BuildType) => {
+    setSelected(type);
+    onSelect(type);
   };
 
   return (
-    <div
-      ref={rootRef}
-      className="fixed inset-0 z-[9999] bg-white text-zinc-900 overflow-hidden"
-      style={{ fontFamily: "ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial" }}
-    >
-      {rippleOn && (
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={
-            {
-              ["--cx" as any]: `${origin.x}%`,
-              ["--cy" as any]: `${origin.y}%`,
-            } as React.CSSProperties
-          }
-        >
-          <div className="binary-ripple binary-ripple-1" />
-          <div className="binary-ripple binary-ripple-2" />
-          <div className="binary-ripple binary-ripple-3" />
-          <div className="binary-ripple binary-ripple-4" />
-        </div>
-      )}
+    <div className="min-h-screen w-full bg-[#0a001f] relative overflow-hidden flex items-center justify-center">
+      {/* Ultra deep cosmic void */}
+      <div className="absolute inset-0 bg-[radial-gradient(at_50%_30%,#2a0055_0%,#0a001f_70%)]" />
 
-      {sploosh.active && (
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={
-            {
-              ["--sx" as any]: `${sploosh.x}%`,
-              ["--sy" as any]: `${sploosh.y}%`,
-            } as React.CSSProperties
-          }
-        >
-          <div className="sploosh-ring sploosh-ring-1" />
-          <div className="sploosh-ring sploosh-ring-2" />
-          <div className="sploosh-ring sploosh-ring-3" />
-          <div className="sploosh-wash" />
-        </div>
-      )}
-
-      <div className="relative h-full w-full flex items-center justify-center px-6">
-        <div className="w-full max-w-5xl">
-          <div className="min-h-[220px]">
-            {phase >= 2 && (
-              <div className="text-zinc-900">
-                <div className="text-4xl md:text-5xl font-black tracking-[-0.045em] leading-[1.08]">
-                  {typed1}
-                  <span className={`caret ${phase < 3 ? "caret-on" : "caret-off"}`} />
-                </div>
-
-                {phase >= 4 && (
-                  <div className="mt-8 text-2xl md:text-3xl font-semibold text-zinc-700 tracking-[-0.02em]">
-                    {typed2}
-                    <span className={`caret ${phase >= 4 && phase < 5 ? "caret-on" : "caret-off"}`} />
-                  </div>
-                )}
-
-                {phase >= 6 && (
-                  <div className="mt-10 text-xl md:text-2xl font-medium text-zinc-600 leading-relaxed max-w-3xl">
-                    {typed3}
-                    <span className={`caret ${phase >= 6 && phase < 8 ? "caret-on" : "caret-off"}`} />
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {phase >= 8 && (
-            <div className={`mt-14 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 ${isExiting ? "choices-exiting" : "choices-buoy"}`}>
-              {/* ✅ FIX: Mapping over c.value for strictness, but displaying c.display for the UI */}
-              {choices.map((c, idx) => {
-                const sinking = sinkKey === c.value && isExiting;
-                return (
-                  <button
-                    key={c.value}
-                    onClick={(ev) => handleChoiceClick(c.value, ev)}
-                    disabled={isExiting}
-                    className={[
-                      "choice-card",
-                      `delay-${idx}`,
-                      sinking ? "choice-sink" : "",
-                      isExiting && !sinking ? "choice-fade" : "",
-                    ].join(" ")}
-                  >
-                    <div className="flex items-center justify-between gap-4">
-                      <div className="text-lg font-extrabold tracking-[-0.02em]">{c.display}</div>
-                      <div className="w-10 h-10 rounded-2xl bg-zinc-100 flex items-center justify-center text-zinc-800 font-black">
-                        →
-                      </div>
-                    </div>
-                    <div className="mt-2 text-sm text-zinc-600 leading-relaxed">{c.desc}</div>
-                    <div className="card-ripples pointer-events-none" />
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+      {/* Massive layered energy orbs */}
+      <div className="absolute inset-0">
+        <div className="absolute top-[-20%] left-[10%] h-[920px] w-[920px] rounded-full bg-cyan-500/20 blur-[180px] animate-[pulse_14s_ease-in-out_infinite]" />
+        <div className="absolute bottom-[-30%] right-[8%] h-[1100px] w-[1100px] rounded-full bg-fuchsia-600/15 blur-[200px] animate-[pulse_18s_ease-in-out_infinite_1.4s]" />
+        <div className="absolute top-[35%] right-[15%] h-[620px] w-[620px] rounded-full bg-violet-500/20 blur-[140px] animate-[pulse_11s_ease-in-out_infinite_3s]" />
       </div>
 
-      <style jsx>{`
-        .caret { display: inline-block; width: 10px; margin-left: 6px; }
-        .caret-on { height: 0.95em; border-right: 3px solid rgba(0, 0, 0, 0.35); animation: blink 0.95s step-end infinite; }
-        .caret-off { border-right: 3px solid transparent; }
-        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0; } 100% { opacity: 1; } }
+      {/* Matrix grid overlay */}
+      <div className="absolute inset-0 bg-[linear-gradient(#ffffff04_1px,transparent_1px),linear-gradient(90deg,#ffffff04_1px,transparent_1px)] bg-[size:42px_42px]" />
 
-        :global(.binary-ripple) {
-          position: absolute;
-          left: var(--cx);
-          top: var(--cy);
-          transform: translate(-50%, -50%);
-          border-radius: 999px;
-          opacity: 0;
-          width: 18px;
-          height: 18px;
-          background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='90'%3E%3Crect width='100%25' height='100%25' fill='white'/%3E%3Cg fill='%23111111' fill-opacity='0.28' font-family='ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, %22Liberation Mono%22, %22Courier New%22, monospace' font-size='18'%3E%3Ctext x='0' y='22'%3E010101001%20010101001%20010101001%3C/text%3E%3Ctext x='0' y='48'%3E010101001%20010101001%20010101001%3C/text%3E%3Ctext x='0' y='74'%3E010101001%20010101001%20010101001%3C/text%3E%3C/g%3E%3C/svg%3E");
-          background-repeat: repeat;
-          background-size: 220px 90px;
-          filter: blur(0.15px);
-          -webkit-mask-image: radial-gradient(circle, rgba(0,0,0,1) 58%, rgba(0,0,0,0) 72%);
-          mask-image: radial-gradient(circle, rgba(0,0,0,1) 58%, rgba(0,0,0,0) 72%);
-          animation: binaryRing 2.25s ease-out infinite;
-        }
+      <div className="relative z-10 w-full max-w-6xl px-6 py-12">
+        {/* Logo + Title */}
+        <div className="flex flex-col items-center text-center mb-16">
+          <div className="relative mb-8">
+            {/* Outer energy rings */}
+            <div className="absolute -inset-12 rounded-full border border-cyan-400/30 animate-[ping_3.5s_ease-out_infinite]" />
+            <div className="absolute -inset-[68px] rounded-full border border-fuchsia-400/20 animate-[ping_4.8s_ease-out_infinite_0.6s]" />
 
-        :global(.binary-ripple-2) { animation-delay: 0.32s; opacity: 0; }
-        :global(.binary-ripple-3) { animation-delay: 0.64s; opacity: 0; }
-        :global(.binary-ripple-4) { animation-delay: 0.96s; opacity: 0; }
+            <div className="h-32 w-32 rounded-3xl bg-gradient-to-br from-cyan-300 via-fuchsia-500 to-violet-500 p-[4px] shadow-[0_0_120px_#67e8f9]">
+              <div className="h-full w-full rounded-3xl bg-black flex items-center justify-center relative overflow-hidden">
+                <span className="text-7xl font-black tracking-[-6px] text-white drop-shadow-[0_0_50px_#c026d3]">B</span>
+                {/* Inner electric core */}
+                <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-cyan-400/50 to-fuchsia-500/40 animate-pulse" />
+              </div>
+            </div>
+          </div>
 
-        @keyframes binaryRing {
-          0% { transform: translate(-50%, -50%) scale(0.18); opacity: 0; }
-          16% { opacity: 0.55; }
-          100% { transform: translate(-50%, -50%) scale(22.0); opacity: 0; }
-        }
+          <h1 className="text-8xl md:text-[110px] font-black tracking-[-7px] leading-none bg-gradient-to-b from-white via-neutral-100 to-neutral-400 bg-clip-text text-transparent">
+            HI, I’M{" "}
+            <span className="bg-gradient-to-r from-cyan-300 via-fuchsia-400 to-violet-400 bg-clip-text text-transparent">
+              BUILDLIO
+            </span>.
+          </h1>
 
-        .choices-buoy .choice-card {
-          opacity: 0;
-          transform: translateY(26px) scale(0.985);
-          animation: buoyPop 980ms cubic-bezier(0.18, 0.92, 0.2, 1) forwards;
-        }
-        @keyframes buoyPop {
-          0% { opacity: 0; transform: translateY(34px) scale(0.98); }
-          60% { opacity: 1; transform: translateY(-6px) scale(1); }
-          78% { transform: translateY(2px) scale(1); }
-          100% { opacity: 1; transform: translateY(0) scale(1); }
-        }
+          <p className="mt-6 text-2xl text-neutral-400 max-w-lg">
+            Choose your creation. I will materialize it instantly.
+          </p>
+        </div>
 
-        .delay-0 { animation-delay: 0ms; }
-        .delay-1 { animation-delay: 140ms; }
-        .delay-2 { animation-delay: 280ms; }
-        .delay-3 { animation-delay: 420ms; }
-        .delay-4 { animation-delay: 560ms; }
-        .delay-5 { animation-delay: 700ms; }
+        {/* Cards Grid */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {CARD.map((card) => {
+            const isActive = active === card.key;
+            return (
+              <button
+                key={card.key}
+                onClick={() => handleSelect(card.key)}
+                onMouseEnter={() => setHovered(card.key)}
+                onMouseLeave={() => setHovered(null)}
+                className={`
+                  group relative h-full overflow-hidden rounded-3xl border p-10 text-left transition-all duration-700
+                  ${isActive 
+                    ? "border-cyan-400 shadow-[0_0_90px_#67e8f9] scale-[1.02]" 
+                    : "border-white/10 bg-white/5 hover:border-white/30 hover:-translate-y-3"
+                  }
+                `}
+              >
+                {/* Heavy glass + inner glow */}
+                <div className={`absolute inset-0 bg-gradient-to-br ${card.accent} opacity-10 group-hover:opacity-30 transition-all ${isActive ? "opacity-40" : ""}`} />
 
-        .choice-card {
-          position: relative;
-          text-align: left;
-          padding: 22px;
-          border-radius: 28px;
-          border: 1px solid rgba(0, 0, 0, 0.10);
-          background: #fff;
-          transition: transform 260ms ease, box-shadow 260ms ease, opacity 260ms ease;
-          box-shadow: 0 14px 34px rgba(0, 0, 0, 0.07);
-        }
-        .choice-card:hover { transform: translateY(-2px); box-shadow: 0 18px 44px rgba(0, 0, 0, 0.085); }
-        .choice-card:active { transform: translateY(1px); }
+                {/* Shine sweep */}
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent opacity-0 group-hover:opacity-100 -skew-x-12 translate-x-[-200%] group-hover:translate-x-[200%] transition-transform duration-1000" />
 
-        .choice-sink { transform: translateY(14px) scale(0.985) !important; box-shadow: 0 8px 20px rgba(0, 0, 0, 0.06) !important; }
-        .choice-sink::after {
-          content: ""; position: absolute; inset: -2px; border-radius: 30px; border: 2px solid rgba(0, 0, 0, 0.09);
-          opacity: 0; animation: sinkOutline 720ms ease-out forwards; pointer-events: none;
-        }
-        @keyframes sinkOutline { 0% { opacity: 0; transform: scale(1); } 18% { opacity: 0.6; } 100% { opacity: 0; transform: scale(1.14); } }
+                <div className="relative">
+                  <div className="font-mono text-xs tracking-[3px] text-neutral-500 mb-3">{card.meta}</div>
 
-        .card-ripples { position: absolute; left: 22px; right: 22px; bottom: 14px; height: 44px; opacity: 0; }
-        .choice-sink .card-ripples {
-          opacity: 1;
-          background: radial-gradient(circle at 50% 65%, rgba(0, 0, 0, 0.10), rgba(255, 255, 255, 0) 58%),
-                      radial-gradient(circle at 50% 65%, rgba(0, 0, 0, 0.07), rgba(255, 255, 255, 0) 62%);
-          animation: cardRipple 720ms ease-out forwards;
-        }
-        @keyframes cardRipple { 0% { transform: translateY(0) scale(0.90); opacity: 0.22; } 35% { opacity: 0.32; } 100% { transform: translateY(10px) scale(1.28); opacity: 0; } }
+                  <h3 className="text-5xl font-black tracking-[-3px] text-white mb-5">
+                    {card.title}
+                  </h3>
 
-        .choice-fade { opacity: 0.35 !important; transform: translateY(10px) scale(0.99) !important; }
+                  <p className="text-neutral-400 text-[15px] leading-relaxed">
+                    {card.desc}
+                  </p>
 
-        .sploosh-ring {
-          position: absolute; left: var(--sx); top: var(--sy); width: 12px; height: 12px;
-          transform: translate(-50%, -50%) scale(0.2); border-radius: 999px; border: 2px solid rgba(0, 0, 0, 0.10);
-          opacity: 0; animation: ring 880ms ease-out forwards;
-        }
-        .sploosh-ring-2 { animation-delay: 130ms; border-color: rgba(0, 0, 0, 0.08); }
-        .sploosh-ring-3 { animation-delay: 240ms; border-color: rgba(0, 0, 0, 0.06); }
-        @keyframes ring { 0% { transform: translate(-50%, -50%) scale(0.2); opacity: 0; } 12% { opacity: 0.6; } 100% { transform: translate(-50%, -50%) scale(92); opacity: 0; } }
+                  <div className="mt-10 flex justify-between items-end">
+                    <div className={`text-sm font-medium tracking-wider transition-colors ${isActive ? "text-cyan-400" : "text-white/70 group-hover:text-white"}`}>
+                      INITIALIZE PROTOCOL →
+                    </div>
+                    
+                    <div className={`h-4 w-4 rounded-full transition-all duration-300 ${isActive ? "bg-cyan-400 shadow-[0_0_30px_#67e8f9]" : "bg-white/30 group-hover:bg-white/60"}`} />
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
 
-        .sploosh-wash {
-          position: absolute; inset: 0;
-          background: radial-gradient(circle at var(--sx) var(--sy), rgba(0, 0, 0, 0.06), rgba(0, 0, 0, 0.02) 18%, rgba(255, 255, 255, 0) 50%);
-          animation: wash 880ms ease-out forwards; opacity: 0;
-        }
-        @keyframes wash { 0% { opacity: 0; } 18% { opacity: 1; } 100% { opacity: 0; } }
-      `}</style>
+        {/* Bottom status bar */}
+        <div className="mt-16 flex justify-center">
+          <div className="flex items-center gap-4 rounded-full border border-white/10 bg-white/5 px-10 py-3 text-xs font-mono tracking-[3px] text-neutral-400 shadow-[0_0_40px_rgba(0,0,0,.8)]">
+            NEURAL FORGE v∞ • SYSTEM STATUS: 
+            <span className="inline-flex items-center gap-1.5 text-emerald-400 font-bold">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500" />
+              </span>
+              LIVE
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
