@@ -39,7 +39,7 @@ export default function BuildlioApp() {
     []
   );
 
-  const [user, setUser] = useState<UserLite>(null);
+  const [user, setUser] = useState<UserLite | null>(null);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
 
