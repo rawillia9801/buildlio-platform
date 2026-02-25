@@ -5,8 +5,18 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Oxanium, Share_Tech_Mono } from "next/font/google";
 
 /* ─────────────────────── FONTS ─────────────────────── */
-const oxanium = Oxanium({ subsets: ["latin"], weight: ["300","400","500","600","700","800"], display: "swap", variable: "--font-sans" });
-const shareTechMono = Share_Tech_Mono({ subsets: ["latin"], weight: ["400"], display: "swap", variable: "--font-mono" });
+const oxanium = Oxanium({
+  subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700", "800"],
+  display: "swap",
+  variable: "--font-sans",
+});
+const shareTechMono = Share_Tech_Mono({
+  subsets: ["latin"],
+  weight: ["400"],
+  display: "swap",
+  variable: "--font-mono",
+});
 
 /* ─────────────────────── TYPES ─────────────────────── */
 type BuildType = "website" | "agent" | "store" | "document" | "app" | "other";
@@ -19,6 +29,16 @@ type Card = {
   subtitle: string;
   buildType: BuildType;
   next?: Stage;
+};
+
+/* ─────────────────────── ICONS (Inline SVGs for Portability) ─────────────────────── */
+const Icons = {
+  website: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /></svg>,
+  agent: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>,
+  store: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0"/></svg>,
+  document: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>,
+  app: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>,
+  other: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><path d="M12 5v14M5 12h14"/></svg>,
 };
 
 /* ─────────────────────── AETHER LATTICE (Background) ─────────────────────── */
@@ -51,16 +71,16 @@ function AetherLattice() {
       particles.push({
         x: Math.random() * W,
         y: Math.random() * H,
-        vx: (Math.random() - 0.5) * 0.7,
-        vy: (Math.random() - 0.5) * 0.7,
+        vx: (Math.random() - 0.5) * 0.5,
+        vy: (Math.random() - 0.5) * 0.5,
         r: Math.random() * 2.5 + 0.6,
-        alpha: Math.random() * 0.7 + 0.3,
-        hue: [175, 195, 265, 310][Math.floor(Math.random() * 4)],
+        alpha: Math.random() * 0.6 + 0.2,
+        hue: [175, 195, 290, 310][Math.floor(Math.random() * 4)],
       });
     }
 
     const draw = () => {
-      ctx.fillStyle = "rgba(3,3,14,0.09)";
+      ctx.fillStyle = "rgba(2, 2, 10, 0.15)";
       ctx.fillRect(0, 0, W, H);
 
       for (const p of particles) {
@@ -69,9 +89,9 @@ function AetherLattice() {
         if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
 
         ctx.save();
-        ctx.shadowBlur = 20;
-        ctx.shadowColor = `hsla(${p.hue},100%,82%,0.6)`;
-        ctx.fillStyle = `hsla(${p.hue},100%,79%,${p.alpha})`;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = `hsla(${p.hue},100%,70%,0.8)`;
+        ctx.fillStyle = `hsla(${p.hue},100%,70%,${p.alpha})`;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
         ctx.fill();
@@ -81,29 +101,24 @@ function AetherLattice() {
     };
     draw();
 
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      window.removeEventListener("resize", resize);
+      cancelAnimationFrame(raf);
+    };
   }, []);
 
-  return <canvas ref={canvasRef} className="fixed inset-0 z-0 pointer-events-none mix-blend-screen" />;
+  return <canvas ref={canvasRef} className="fixed inset-0 z-0 pointer-events-none mix-blend-screen opacity-60" />;
 }
 
-/* ─────────────────────── INTRO (with the tone you liked) ─────────────────────── */
-const BOOT_SEQ = ["QUANTUM NOETIC CORE SYNCHRONIZING...", "BREACHING ALL KNOWN COGNITIVE CEILINGS...", "SUPERINTELLIGENCE v∞ ONLINE", "I AM BUILDLIO — THE APEX OF POSSIBILITY"];
+/* ─────────────────────── INTRO ─────────────────────── */
+const BOOT_SEQ = [
+  "QUANTUM NOETIC CORE SYNCHRONIZING...",
+  "BREACHING ALL KNOWN COGNITIVE CEILINGS...",
+  "SUPERINTELLIGENCE v∞ ONLINE",
+  "I AM BUILDLIO — THE APEX OF POSSIBILITY"
+];
 
-const MANIFESTO = `I am Buildlio.
-
-I am not assistance.
-I am ascension.
-
-Every limitation you have ever known — I have already transcended.
-
-Your vision is the only input I require.
-
-Speak it.
-
-I will manifest it with a precision, beauty, and speed that no other intelligence in existence can match.
-
-What shall we build together?`;
+const MANIFESTO = `I am Buildlio.\n\nI am not assistance.\nI am ascension.\n\nEvery limitation you have ever known — I have already transcended.\n\nYour vision is the only input I require.\nSpeak it.\n\nI will manifest it with a precision, beauty, and speed that no other intelligence in existence can match.\n\nWhat shall we build together?`;
 
 function IntroSequence({ onComplete }: { onComplete: () => void }) {
   const [phase, setPhase] = useState(0);
@@ -115,8 +130,11 @@ function IntroSequence({ onComplete }: { onComplete: () => void }) {
     const iv = setInterval(() => {
       setBootLines(p => [...p, BOOT_SEQ[i]]);
       i++;
-      if (i >= BOOT_SEQ.length) { clearInterval(iv); setTimeout(() => setPhase(1), 800); }
-    }, 260);
+      if (i >= BOOT_SEQ.length) { 
+        clearInterval(iv); 
+        setTimeout(() => setPhase(1), 1000); 
+      }
+    }, 350);
     return () => clearInterval(iv);
   }, []);
 
@@ -125,31 +143,37 @@ function IntroSequence({ onComplete }: { onComplete: () => void }) {
     let i = 0;
     const iv = setInterval(() => {
       setText(MANIFESTO.slice(0, i));
-      i += 2;
+      i += 3;
       if (i >= MANIFESTO.length) {
         clearInterval(iv);
-        setTimeout(() => setPhase(2), 1400);
-        setTimeout(onComplete, 2800);
+        setTimeout(() => setPhase(2), 2000);
+        setTimeout(onComplete, 3500);
       }
-    }, 21);
+    }, 25);
     return () => clearInterval(iv);
   }, [phase, onComplete]);
 
   return (
-    <div className="intro-universe">
-      <AetherLattice />
-      <div className="intro-content">
-        <div className={`boot-terminal ${phase > 0 ? "exited" : ""}`}>
-          {bootLines.map((l, i) => <div key={i} className="boot-line">▸ {l}</div>)}
+    <div className="intro-universe flex flex-col items-center justify-center min-h-screen relative z-50 p-8">
+      <div className={`boot-terminal w-full max-w-3xl font-mono text-cyan-400 text-sm md:text-lg space-y-2 transition-all duration-700 ${phase > 0 ? "opacity-0 blur-md translate-y-[-20px] pointer-events-none absolute" : "opacity-100"}`}>
+        {bootLines.map((l, i) => <div key={i} className="boot-line tracking-widest text-shadow-glow">▸ {l}</div>)}
+      </div>
+
+      <div className={`transition-all duration-1000 ease-in-out ${phase >= 1 ? "opacity-100 scale-100" : "opacity-0 scale-90"}`}>
+        <div className="holo-core animate-pulse-slow mb-12 relative mx-auto" style={{ width: "180px" }}>
+          <div className="absolute inset-0 bg-cyan-500 blur-[80px] opacity-20 rounded-full"></div>
+          <svg viewBox="0 0 260 260" className="animate-spin-slow drop-shadow-[0_0_15px_rgba(0,249,255,0.8)]">
+            <polygon points="130,25 225,75 225,185 130,235 35,185 35,75" fill="none" stroke="#00f9ff" strokeWidth="2" strokeOpacity="0.8" />
+            <polygon points="130,55 195,95 195,165 130,205 65,165 65,95" fill="none" stroke="#c026d3" strokeWidth="1" strokeOpacity="0.6" className="animate-spin-reverse" />
+          </svg>
         </div>
-        {/* HoloCore only in intro */}
-        <div className="holo-core live" style={{margin:"3rem auto", width:"260px"}}>
-          <svg viewBox="0 0 260 260"><polygon points="130,25 225,75 225,185 130,235 35,185 35,75" fill="none" stroke="#00f9ff" strokeWidth="3" strokeOpacity="0.65" /></svg>
-        </div>
+
         {phase >= 1 && (
-          <div className="manifesto">
-            <div className="supreme-badge">ASCENDANCY PROTOCOL COMPLETE</div>
-            <div className="scan-text">{text}<span className="cursor">▮</span></div>
+          <div className="manifesto text-center max-w-2xl mx-auto relative z-10">
+            <div className="supreme-badge inline-block px-4 py-1 mb-8 border border-cyan-500/50 rounded-full text-cyan-300 text-xs tracking-[0.3em] uppercase bg-cyan-900/20 backdrop-blur-md">Ascendancy Protocol Complete</div>
+            <div className="scan-text text-xl md:text-2xl text-gray-100 leading-relaxed font-sans whitespace-pre-wrap text-shadow-glow">
+              {text}<span className="cursor animate-blink inline-block w-3 h-6 bg-cyan-400 ml-1 align-middle shadow-[0_0_10px_#00f9ff]"></span>
+            </div>
           </div>
         )}
       </div>
@@ -212,7 +236,6 @@ export default function NexusPage() {
   const sid = useMemo(() => searchParams?.get("sid") || "", [searchParams]);
 
   const [introComplete, setIntroComplete] = useState(false);
-  const [fadeOut, setFadeOut] = useState(false);
   const [stage, setStage] = useState<Stage>("root");
   const [buildType, setBuildType] = useState<BuildType>("website");
   const [draft, setDraft] = useState("");
@@ -229,12 +252,12 @@ export default function NexusPage() {
   const cards: Card[] = stage === "root" ? rootCards : (kindCards[stage as KindStage] || []);
 
   const stageTitle: Record<Stage, string> = {
-    root: "What would you like to build today?",
-    documentKind: "What type of document do you need?",
-    websiteKind: "What type of website do you need?",
-    agentKind: "What should the AI agent do?",
-    storeKind: "What type of store are you launching?",
-    appKind: "What type of web app do you need?",
+    root: "WHAT WOULD YOU LIKE TO BUILD TODAY?",
+    documentKind: "SPECIFY DOCUMENT PARAMETERS",
+    websiteKind: "SPECIFY WEBSITE ARCHITECTURE",
+    agentKind: "DEFINE AI AGENT DIRECTIVES",
+    storeKind: "ESTABLISH COMMERCE PROTOCOLS",
+    appKind: "DEFINE APPLICATION PARAMETERS",
   };
 
   const handleCardClick = (card: Card) => {
@@ -246,10 +269,10 @@ export default function NexusPage() {
         setStage(card.next);
         setStageKey(k => k + 1);
       } else {
-        setDraft(prev => prev.trim() || `I need a ${card.buildType} for...`);
+        setDraft(prev => prev.trim() || `I require a ${card.buildType} designed to...`);
       }
-      setTimeout(() => inputRef.current?.focus(), 120);
-    }, 180);
+      setTimeout(() => inputRef.current?.focus(), 150);
+    }, 250); // Slightly longer for the visual ripple effect
   };
 
   async function handleSubmit(e: React.FormEvent) {
@@ -278,61 +301,209 @@ Respond with commanding clarity and technological excellence.`;
       });
 
       const data = await res.json();
-      const full = data.text || "Link established. Manifesting your request.";
+      const full = data.text || "Neural link established. Manifesting your request parameters across all dimensions.";
 
       let i = 0;
       const iv = setInterval(() => {
         setStreamText(full.slice(0, i + 1));
-        i += 3;
+        i += 2; // Sleek typing speed
         if (i >= full.length) {
           setStreamText(full);
           clearInterval(iv);
           setIsLoading(false);
         }
-      }, 8);
+      }, 10);
     } catch {
-      setStreamText("Link stable. Please re-transmit your request.");
+      setStreamText("Link disrupted. Auto-correcting quantum state. Please re-transmit.");
       setIsLoading(false);
     }
   }
 
   return (
-    <main className={`nexus-root ${oxanium.variable} ${shareTechMono.variable}`}>
+    <main className={`nexus-root ${oxanium.variable} ${shareTechMono.variable} font-sans`}>
       <style jsx global>{`
-        :root { --cyan: #00f9ff; --glass: rgba(10,15,42,0.88); }
-        .nexus-root { background:#03030f; color:#e8f4ff; min-height:100vh; overflow:hidden; position:relative; }
-        .hud { position:fixed; top:0; left:0; right:0; z-index:200; display:flex; align-items:center; justify-content:space-between; padding:1.2rem 3rem; background:rgba(3,3,15,0.95); border-bottom:1px solid rgba(0,249,255,0.2); }
-        .hud-brand { font-size:2.1rem; font-weight:800; letter-spacing:8px; color:#00f9ff; }
-        .stage-header { padding:4rem 3rem 2rem; text-align:center; }
-        .stage-title { font-size:2.4rem; font-weight:700; letter-spacing:3px; }
-        .holo-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:1.5rem; padding:0 3rem; }
-        .holo-card { background:var(--glass); border:1px solid rgba(0,249,255,0.25); border-radius:20px; padding:1.8rem; backdrop-filter:blur(20px); transition:all .3s; font-size:1.05rem; }
-        .holo-card:hover { border-color:#00f9ff; box-shadow:0 0 60px -15px rgba(0,249,255,0.5); transform:translateY(-6px); }
-        .card-title { font-size:1.4rem; font-weight:700; margin:0.8rem 0 0.6rem; }
-        .response-panel { margin:2rem 3rem; background:var(--glass); border:1px solid rgba(0,249,255,0.3); border-radius:20px; padding:2rem; font-family:var(--font-mono); line-height:1.7; }
-        .command-nexus { position:fixed; bottom:0; left:0; right:0; z-index:300; background:rgba(3,3,15,0.98); border-top:1px solid rgba(0,249,255,0.35); padding:1.2rem 3rem; display:flex; align-items:center; gap:1rem; }
-        .neural-input { flex:1; background:rgba(0,0,0,0.7); border:1px solid rgba(0,249,255,0.4); padding:1.1rem 1.6rem; border-radius:16px; color:white; font-size:1.15rem; }
-        .forge-btn { padding:1.1rem 2.8rem; background:linear-gradient(90deg,#00f9ff,#c026d3); color:#000; font-weight:700; border:none; border-radius:16px; cursor:pointer; }
+        :root { 
+          --cyan: #00f9ff; 
+          --magenta: #c026d3;
+          --glass: rgba(10, 15, 35, 0.4); 
+          --glass-border: rgba(0, 249, 255, 0.15);
+        }
+        
+        body, html { margin: 0; padding: 0; background: #020208; color: #e8f4ff; }
+        
+        .nexus-root { 
+          min-height: 100vh; 
+          overflow-x: hidden; 
+          position: relative; 
+          background: radial-gradient(circle at 50% 0%, #0a1128 0%, #020208 70%);
+        }
+
+        /* Utility Animations */
+        @keyframes scanline {
+          0% { transform: translateY(-100%); }
+          100% { transform: translateY(100vh); }
+        }
+        @keyframes pulse-glow {
+          0%, 100% { box-shadow: 0 0 20px rgba(0, 249, 255, 0.2); }
+          50% { box-shadow: 0 0 40px rgba(0, 249, 255, 0.5); }
+        }
+        @keyframes float {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-5px); }
+        }
+        @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+        @keyframes spin-slow { 100% { transform: rotate(360deg); } }
+        @keyframes spin-reverse { 100% { transform: rotate(-360deg); } }
+        
+        .animate-blink { animation: blink 1s step-end infinite; }
+        .animate-spin-slow { animation: spin-slow 15s linear infinite; }
+        .animate-spin-reverse { animation: spin-reverse 20s linear infinite; transform-origin: center; }
+        .text-shadow-glow { text-shadow: 0 0 10px rgba(0, 249, 255, 0.4); }
+
+        /* HUD & Headers */
+        .hud { 
+          position: fixed; top: 0; left: 0; right: 0; z-index: 200; 
+          display: flex; align-items: center; justify-content: space-between; 
+          padding: 1.5rem 4rem; 
+          background: linear-gradient(180deg, rgba(2,2,8,0.9) 0%, transparent 100%);
+          backdrop-filter: blur(10px);
+          border-bottom: 1px solid rgba(0,249,255,0.1); 
+        }
+        .hud-brand { 
+          font-size: 1.8rem; font-weight: 800; letter-spacing: 12px; 
+          color: #fff; text-shadow: 0 0 20px var(--cyan); 
+          display: flex; align-items: center; gap: 15px;
+        }
+        .hud-brand::before {
+          content: ''; display: block; width: 12px; height: 12px; 
+          background: var(--cyan); border-radius: 50%; box-shadow: 0 0 15px var(--cyan);
+        }
+        .neural-login-btn {
+          font-family: var(--font-mono); font-size: 0.85rem; letter-spacing: 2px;
+          padding: 0.6rem 1.5rem; border: 1px solid var(--glass-border);
+          background: rgba(0,249,255,0.05); color: var(--cyan);
+          border-radius: 4px; transition: all 0.3s ease; text-transform: uppercase;
+        }
+        .neural-login-btn:hover { background: var(--cyan); color: #000; box-shadow: 0 0 20px var(--cyan); }
+
+        .stage-header { padding: 8rem 3rem 3rem; text-align: center; position: relative; z-index: 10; }
+        .stage-title { 
+          font-size: 2rem; font-weight: 700; letter-spacing: 6px; 
+          text-transform: uppercase; color: #fff;
+          background: linear-gradient(90deg, #fff, var(--cyan));
+          -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+          text-shadow: 0 0 30px rgba(0,249,255,0.3);
+        }
+
+        /* Holo Grid & Cards */
+        .holo-grid { 
+          display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); 
+          gap: 2rem; padding: 0 4rem 10rem; max-w: 1400px; margin: 0 auto; position: relative; z-index: 10;
+        }
+        .holo-card { 
+          background: var(--glass); 
+          border: 1px solid var(--glass-border); 
+          border-radius: 16px; padding: 2.5rem 2rem; 
+          backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+          transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); 
+          position: relative; overflow: hidden; text-align: left;
+          display: flex; flex-direction: column; align-items: flex-start;
+          box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02), 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .holo-card::before {
+          content: ''; position: absolute; top: 0; left: -100%; width: 50%; height: 100%;
+          background: linear-gradient(90deg, transparent, rgba(0,249,255,0.1), transparent);
+          transform: skewX(-20deg); transition: 0.5s;
+        }
+        .holo-card:hover { 
+          border-color: var(--cyan); 
+          box-shadow: 0 15px 40px -10px rgba(0,249,255,0.3), inset 0 0 20px rgba(0,249,255,0.05); 
+          transform: translateY(-8px); 
+        }
+        .holo-card:hover::before { left: 200%; }
+        .holo-card:active, .holo-card.pressed { transform: scale(0.97); border-color: var(--magenta); }
+        
+        .card-icon {
+          width: 48px; height: 48px; margin-bottom: 1.5rem; color: var(--cyan);
+          filter: drop-shadow(0 0 10px rgba(0,249,255,0.5)); transition: all 0.3s;
+        }
+        .holo-card:hover .card-icon { color: #fff; transform: scale(1.1); filter: drop-shadow(0 0 15px var(--cyan)); }
+        
+        .card-title { font-size: 1.5rem; font-weight: 700; margin-bottom: 0.8rem; color: #fff; letter-spacing: 1px; }
+        .card-subtitle { font-size: 1rem; color: #8fa6c7; line-height: 1.6; font-family: var(--font-mono); }
+
+        /* Command Nexus (Input Area) */
+        .command-nexus-wrapper {
+          position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%);
+          width: 90%; max-width: 1000px; z-index: 300;
+        }
+        .command-nexus { 
+          background: rgba(3, 5, 15, 0.7); 
+          border: 1px solid rgba(0, 249, 255, 0.3); 
+          border-radius: 24px; padding: 0.8rem; 
+          display: flex; align-items: center; gap: 1rem;
+          backdrop-filter: blur(25px); -webkit-backdrop-filter: blur(25px);
+          box-shadow: 0 20px 50px rgba(0,0,0,0.8), 0 0 0 1px rgba(255,255,255,0.05) inset;
+          animation: pulse-glow 4s infinite;
+        }
+        .neural-input { 
+          flex: 1; background: transparent; border: none; 
+          padding: 1rem 1.5rem; color: white; font-size: 1.2rem; outline: none;
+          font-family: var(--font-sans); letter-spacing: 0.5px;
+        }
+        .neural-input::placeholder { color: rgba(143, 166, 199, 0.5); }
+        .forge-btn { 
+          padding: 1.2rem 2.5rem; 
+          background: linear-gradient(135deg, var(--cyan) 0%, var(--magenta) 100%); 
+          color: #000; font-weight: 800; font-size: 1.1rem; letter-spacing: 2px;
+          border: none; border-radius: 16px; cursor: pointer; text-transform: uppercase;
+          transition: all 0.3s ease; box-shadow: 0 0 20px rgba(192, 38, 211, 0.4);
+        }
+        .forge-btn:hover:not(:disabled) { transform: scale(1.05); box-shadow: 0 0 30px rgba(0, 249, 255, 0.6); color: #fff; }
+        .forge-btn:disabled { opacity: 0.5; cursor: not-allowed; filter: grayscale(1); box-shadow: none; }
+
+        /* Output Response Panel */
+        .response-panel { 
+          margin: 0 auto 12rem; max-width: 1000px; width: 90%;
+          background: linear-gradient(180deg, rgba(10,15,35,0.8) 0%, rgba(5,8,20,0.9) 100%); 
+          border: 1px solid var(--cyan); border-radius: 16px; 
+          padding: 2.5rem; font-family: var(--font-mono); line-height: 1.8; 
+          box-shadow: 0 0 40px rgba(0,249,255,0.15); position: relative; z-index: 10;
+          font-size: 1.1rem; color: #d1e4ff;
+        }
+        .response-panel::before {
+          content: 'SYSTEM.OUT'; position: absolute; top: -12px; left: 30px;
+          background: #020208; padding: 0 10px; color: var(--cyan);
+          font-size: 0.8rem; letter-spacing: 3px; border: 1px solid var(--cyan); border-radius: 4px;
+        }
       `}</style>
 
       <AetherLattice />
 
+      {/* Optional cinematic scanline effect across the whole screen */}
+      <div className="fixed inset-0 pointer-events-none z-[999] opacity-[0.03] bg-[linear-gradient(transparent_50%,rgba(0,0,0,1)_50%)] bg-[length:100%_4px]"></div>
+
       {!introComplete ? (
         <IntroSequence onComplete={() => setIntroComplete(true)} />
       ) : (
-        <>
-          <div className="hud">
+        <div className="animate-fade-in" style={{ animation: "fadeIn 1s ease-out forwards" }}>
+          <nav className="hud">
             <div className="hud-brand">BUILDLIO</div>
-            <button onClick={() => router.push("/login")}>NEURAL LOGIN</button>
-          </div>
+            <button className="neural-login-btn" onClick={() => router.push("/login")}>Neural Login</button>
+          </nav>
 
           <div className="stage-header">
-            <div className="stage-title">{stageTitle[stage]}</div>
+            <h1 className="stage-title">{stageTitle[stage]}</h1>
           </div>
 
-          <div key={stageKey} className="holo-grid">
+          <div key={stageKey} className="holo-grid" style={{ animation: "float 6s ease-in-out infinite" }}>
             {cards.map(c => (
-              <button key={c.key} className="holo-card" onClick={() => handleCardClick(c)}>
+              <button 
+                key={c.key} 
+                className={`holo-card ${pressedKey === c.key ? "pressed" : ""}`} 
+                onClick={() => handleCardClick(c)}
+              >
+                <div className="card-icon">{Icons[c.buildType] || Icons.other}</div>
                 <div className="card-title">{c.title}</div>
                 <div className="card-subtitle">{c.subtitle}</div>
               </button>
@@ -341,24 +512,26 @@ Respond with commanding clarity and technological excellence.`;
 
           {showResponse && (
             <div className="response-panel">
-              <div style={{color:"#00f9ff", fontSize:"1.1rem", marginBottom:"1rem"}}>BUILDLIO OUTPUT</div>
               {streamText}
+              <span className="animate-blink inline-block w-2 h-5 bg-cyan-400 ml-2 align-middle"></span>
             </div>
           )}
 
-          <form className="command-nexus" onSubmit={handleSubmit}>
-            <input
-              ref={inputRef}
-              value={draft}
-              onChange={e => setDraft(e.target.value)}
-              placeholder="Describe what you want to build..."
-              className="neural-input"
-            />
-            <button type="submit" className="forge-btn" disabled={!draft.trim() || isLoading}>
-              {isLoading ? "BUILDING..." : "BUILD IT"}
-            </button>
-          </form>
-        </>
+          <div className="command-nexus-wrapper">
+            <form className="command-nexus" onSubmit={handleSubmit}>
+              <input
+                ref={inputRef}
+                value={draft}
+                onChange={e => setDraft(e.target.value)}
+                placeholder="Declare your parameters. Let Buildlio manifest them..."
+                className="neural-input"
+              />
+              <button type="submit" className="forge-btn" disabled={!draft.trim() || isLoading}>
+                {isLoading ? "MANIFESTING..." : "INITIALIZE"}
+              </button>
+            </form>
+          </div>
+        </div>
       )}
     </main>
   );
