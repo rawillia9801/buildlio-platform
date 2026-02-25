@@ -1,19 +1,15 @@
 // FILE: app/api/claude-test/route.ts
-// BUILDLIO.SITE — v5.5 Backend (Vision Splash Flow Wiring + Build Types + Document Mode + Dual Validators)
+// BUILDLIO.SITE — v5.6 Backend (Ultra Hi-Tech Builder Tone + Anti-Summary Gates + Stronger Creative Brief)
 //
 // CHANGELOG
-// - v5.5
-//   * ENHANCE: Accepts optional splashChoice + buildConsoleMode hints from the Vision Splash Flow
-//              (white beats / ripple / “sync vs sploosh” / intro), and threads them into the creative brief.
-//   * ENHANCE: Adds optional “second-step chooser” inputs for Documents (documentCategory, jurisdiction),
-//              so the backend can produce the correct doc type immediately (no extra chat step).
-//   * KEEP: HARD-GATE: document builds MUST NOT include snapshot.pages (fail + polish pass)
-//   * KEEP: HARD-GATE: non-document builds MUST NOT include snapshot.documents (fail + polish pass)
-//   * KEEP: buildType canonicalization accepts aliases (landing-page, landingpage, docs, shop, app)
-//   * KEEP: parser accepts hyphens/underscores/spaces consistently
-//   * KEEP: Document mode outputs snapshot.documents[] (NOT pages[])
-//   * KEEP: Document-specific validator + quality gate (no website blocks required for documents)
-//   * KEEP: Website/store/landing/app/other remain website-style snapshot.pages[] with required blocks on index
+// - v5.6
+//   * ENHANCE: “Builder mode” system prompt — explicitly forbids strategy memos (architecture/performance/timeline/stack recs)
+//   * ENHANCE: Anti-summary / anti-consulting hard-gate phrases + structural checks (rejects “Estimated timeline”, “Tech stack recommendation”, etc.)
+//   * ENHANCE: Stronger creative brief: ultra high-tech refined minimalism, friendly + thorough, but always outputs build artifacts
+//   * ENHANCE: Polish pass instruction is sharper: rebuild as snapshot, not a memo; includes banlist + required structure reminders
+//   * KEEP: Vision Splash Flow hints preserved in meta
+//   * KEEP: Document second-step chooser supported
+//   * KEEP: Dual validators + buildType segregation pages vs documents
 //   * KEEP: JSON-only output, extraction, retry “polish pass”, RPC save_version_and_charge_credit on success
 //
 // ANCHOR:ENV
@@ -51,7 +47,6 @@ type SiteSnapshot = {
     buildType?: BuildType;
     intent?: string;
 
-    // optional metadata (UI can send; backend preserves)
     splashChoice?: SplashChoice;
     buildConsoleMode?: BuildConsoleMode;
     documentCategory?: DocumentItem["category"];
@@ -86,7 +81,6 @@ type DocSnapshot = {
     buildType?: BuildType;
     intent?: string;
 
-    // optional metadata (UI can send; backend preserves)
     splashChoice?: SplashChoice;
     buildConsoleMode?: BuildConsoleMode;
     documentCategory?: DocumentItem["category"];
@@ -99,6 +93,9 @@ type BuildlioResponse =
   | { type: "chat"; message: string }
   | { type: "build"; message: string; snapshot: SiteSnapshot | DocSnapshot };
 
+/* -----------------------------
+ANCHOR:UTILS
+-------------------------------- */
 function safeString(v: any) {
   return typeof v === "string" ? v : "";
 }
@@ -123,7 +120,43 @@ function arr(v: any) {
 function getBlock(blocks: any[], type: string) {
   return arr(blocks).find((b) => b && b.type === type);
 }
+function containsAny(haystack: string, needles: string[]) {
+  const h = haystack.toLowerCase();
+  return needles.some((n) => h.includes(n.toLowerCase()));
+}
 
+/* -----------------------------
+ANCHOR:ANTI_SUMMARY_GATES
+-------------------------------- */
+// These are “consultant memo” phrases that should never appear in a BUILD snapshot response.
+// If they show up, it means the model wrote a strategy doc instead of generating page blocks.
+const CONSULTING_MEMO_PHRASES = [
+  "estimated timeline",
+  "timeline:",
+  "4-6 weeks",
+  "technical stack recommendation",
+  "stack recommendation",
+  "information architecture",
+  "performance targets",
+  "speed metrics",
+  "core web vitals",
+  "lighthouse performance",
+  "would you like me to elaborate",
+  "i can elaborate",
+  "let me know if you want",
+  "here’s a breakdown",
+  "scope:",
+  "supporting pages",
+];
+
+function snapshotLooksLikeMemo(parsed: any): boolean {
+  const s = JSON.stringify(parsed || {});
+  return containsAny(s, CONSULTING_MEMO_PHRASES);
+}
+
+/* -----------------------------
+ANCHOR:COPY_QUALITY
+-------------------------------- */
 const GENERIC_BAD = [
   "innovative",
   "cutting-edge",
@@ -142,19 +175,15 @@ const GENERIC_BAD = [
 ];
 const TOO_VAGUE = ["for everyone", "for anyone", "all businesses", "any business", "top-notch", "amazing", "incredible", "unmatched"];
 
-function containsAny(haystack: string, needles: string[]) {
-  const h = haystack.toLowerCase();
-  return needles.some((n) => h.includes(n));
-}
 function hasSpecificitySignals(text: string) {
   const t = text.toLowerCase();
   const hasNumber = /\d/.test(t);
   const hasConcreteNouns =
-    /(calls|bookings|leads|appointments|orders|checkout|invoices|quotes|estimates|calendar|crm|pipeline|onboarding|templates|contracts|deliverables|export|ownership|domain|storefront|catalog|cart|sku|inventory|checkout|shipping)/.test(
+    /(calls|bookings|leads|appointments|orders|checkout|invoices|quotes|estimates|calendar|crm|pipeline|onboarding|templates|contracts|deliverables|export|ownership|domain|storefront|catalog|cart|sku|inventory|checkout|shipping|case study|case studies|portfolio|resume|cv|speaking|talks|engagements)/.test(
       t
     );
   const hasAudience =
-    /(for (local|small|busy|solo|independent|new|growing|service|trade|clinic|salon|agency|coach|creator|restaurant|shop|startup|saas|ecommerce|seller))/i.test(
+    /(for (senior|executive|busy|solo|independent|new|growing|service|trade|clinic|salon|agency|coach|creator|designer|architect|consultant|founder|studio|team|company|brand|enterprise))/i.test(
       text
     );
   return hasNumber || (hasConcreteNouns && hasAudience);
@@ -167,7 +196,6 @@ function canonicalizeBuildType(raw: any): BuildType | null {
   const t0 = normalizeWhitespace(raw).toLowerCase();
   if (!t0) return null;
 
-  // normalize common separators
   const t = t0.replace(/[-\s]+/g, "_").replace(/__+/g, "_").trim();
 
   if (t === "landing") return "landing_page";
@@ -244,10 +272,6 @@ function detectBuildTypeFromText(messages: any[]): BuildType | null {
   const lastUser = [...(messages || [])].reverse().find((m) => m?.role === "user");
   const t = normalizeWhitespace(lastUser?.content).toLowerCase();
 
-  // supports:
-  // "TYPE: store"
-  // "TYPE: landing page"
-  // "TYPE: landing-page"
   const m = t.match(
     /(^|\n)\s*type\s*:\s*(website|landing[_\-\s]*page|landingpage|landing|application|app|portal|document|documents|docs|store|shop|ecommerce|other)\s*(\n|$)/i
   );
@@ -269,10 +293,11 @@ ANCHOR:VALIDATORS
 function validateWebsiteBuild(parsed: any): { ok: boolean; reason?: string } {
   if (parsed?.type !== "build") return { ok: false, reason: "Not a build response" };
 
+  if (snapshotLooksLikeMemo(parsed)) return { ok: false, reason: "Output looks like a strategy memo (must generate page blocks)" };
+
   const snap = parsed?.snapshot;
   if (!snap) return { ok: false, reason: "Missing snapshot" };
 
-  // HARD-GATE: website builds must not include documents
   if (Array.isArray(snap?.documents) && snap.documents.length > 0) {
     return { ok: false, reason: "Website build must not include snapshot.documents" };
   }
@@ -328,7 +353,7 @@ function validateWebsiteBuild(parsed: any): { ok: boolean; reason?: string } {
     if (quote.length < 70) return { ok: false, reason: "Testimonial quote too thin" };
     if (!name) return { ok: false, reason: "Testimonial missing name" };
     if (!role) return { ok: false, reason: "Testimonial missing role" };
-    if (!/\d/.test(quote) && !/(week|weeks|days|hours|export|draft|template|booked|leads|orders|clients|checkout|catalog|portal)/i.test(quote)) {
+    if (!/\d/.test(quote) && !/(week|weeks|days|hours|export|draft|template|booked|leads|orders|clients|checkout|catalog|portal|case study|portfolio)/i.test(quote)) {
       return { ok: false, reason: "Testimonial lacks concrete detail" };
     }
   }
@@ -363,10 +388,11 @@ function validateWebsiteBuild(parsed: any): { ok: boolean; reason?: string } {
 function validateDocumentBuild(parsed: any): { ok: boolean; reason?: string } {
   if (parsed?.type !== "build") return { ok: false, reason: "Not a build response" };
 
+  if (snapshotLooksLikeMemo(parsed)) return { ok: false, reason: "Output looks like a memo (must generate document HTML)" };
+
   const snap = parsed?.snapshot;
   if (!snap) return { ok: false, reason: "Missing snapshot" };
 
-  // HARD-GATE: document builds must not include pages
   if (Array.isArray(snap?.pages) && snap.pages.length > 0) {
     return { ok: false, reason: "Document build must not include snapshot.pages" };
   }
@@ -386,12 +412,10 @@ function validateDocumentBuild(parsed: any): { ok: boolean; reason?: string } {
     if (body.length < 600) return { ok: false, reason: "Document body too short" };
     if (!/<p[\s>]/i.test(body)) return { ok: false, reason: "Document must include <p>" };
 
-    // Basic “looks like a document” signals
     const hasHeading = /<h1[\s>]|<h2[\s>]/i.test(body);
     const hasSections = /<h2[\s>]|<h3[\s>]/i.test(body);
     if (!hasHeading || !hasSections) return { ok: false, reason: "Document needs headings/sections" };
 
-    // Ensure it includes some kind of disclaimer signal (kept flexible)
     if (!/(not legal advice|attorney|counsel|jurisdiction)/i.test(body)) {
       return { ok: false, reason: "Document missing a legal/disclaimer signal" };
     }
@@ -408,6 +432,8 @@ function validateBuildResponse(parsed: any, buildType: BuildType): { ok: boolean
   if (parsed.type === "chat") {
     const msg = normalizeWhitespace(parsed.message);
     if (msg.length < 20) return { ok: false, reason: "Chat message too short" };
+    // also prevent “consulting memo” style replies in chat
+    if (containsAny(msg, CONSULTING_MEMO_PHRASES)) return { ok: false, reason: "Chat reply looks like a memo (ask only 1–2 questions)" };
     return { ok: true };
   }
 
@@ -432,13 +458,18 @@ function buildCreativeBrief(
   const userText = safeString(lastUser?.content).slice(0, 2500);
 
   const typeGuidance: Record<BuildType, string> = {
-    landing_page: "Landing page: focus on ONE goal (lead capture, waitlist, booking, demo request). Copy should be tight and high-converting.",
-    website: "Website: full multi-section marketing site with trust, details, and clear next steps.",
-    application: "Application: position around workflows, roles, dashboard outcomes, and operational clarity. Use language like 'portal', 'workflow', 'handoff', 'audit trail' when relevant.",
+    landing_page:
+      "Landing page: ONE goal. Make it feel premium and high-trust. Strong CTA, tight copy, minimal nav. Still produce the required blocks.",
+    website:
+      "Website: a polished multi-section marketing site. Must feel ultra high-tech, human, helpful, and export-ready. No strategy memos — only page blocks.",
+    application:
+      "Application: speak in workflows, roles, dashboards, operational clarity, security posture. Still produce blocks and keep it conversion-friendly.",
     document:
-      "Document: generate real professional documents (letters/contracts/policies). Do NOT generate a website. Output snapshot.documents[] with print-ready HTML sections, placeholders/fields, and cautious language (not legal advice).",
-    store: "Store: position around catalog, product pages, cart/checkout, trust (shipping/returns), and conversion. Use ecommerce language and buyer confidence.",
-    other: "Other: infer responsibly, still produce a premium, specific build.",
+      "Document: draft a real professional document in HTML. No website. Output snapshot.documents[] only. Include clear headings, placeholders, and not-legal-advice disclaimer.",
+    store:
+      "Store: ecommerce confidence: catalog, products, cart/checkout, shipping/returns clarity, trust signals. Still produce required blocks.",
+    other:
+      "Other: infer responsibly, still output a premium snapshot with concrete deliverables and exportable structure.",
   };
 
   const splashLine =
@@ -452,55 +483,75 @@ function buildCreativeBrief(
       : "";
 
   return `
-CREATIVE BRIEF
+CREATIVE BRIEF (BUILDER MODE — OUTPUT ARTIFACTS, NOT A MEMO)
 - Build type: ${buildType}
 - Type guidance: ${typeGuidance[buildType]}
 ${splashLine}
 ${docChooserLine}
 - User request (may include 'TYPE:' tag): ${userText || "Not specified — infer responsibly and ask 1–2 questions only if absolutely necessary."}
-- Voice: premium, calm confidence, human, direct — not rushed.
-- Constraints:
-  * No fake awards, no fake famous clients, no guaranteed results.
-  * If buildType=document: include “not legal advice” style disclaimer and encourage review by counsel where appropriate.
-  * Make deliverables explicit (export/ownership, what the user receives).
+
+STYLE & FEEL (ULTRA HIGH-TECH, FRIENDLY, THOROUGH)
+- Aesthetic: refined minimalism + high-tech precision. Clean white/neutral base, one strong accent, crisp hierarchy.
+- Voice: confident, kind, helpful, detail-oriented. Short sentences when needed. No fluff.
+- Depth: thorough in content, but expressed with clarity (no giant strategy sections).
+- Trust: realistic, grounded. No fake brands/awards. Avoid guarantees.
+
+HARD CONSTRAINTS (NON-NEGOTIABLE)
+- Do NOT output architecture/performance/timeline/stack recommendations.
+- Do NOT include headings like “Performance Targets”, “Technical Stack”, “Estimated Timeline”, “Information Architecture”.
+- Produce BUILD ARTIFACTS ONLY:
+  * Non-document: snapshot.pages[] with required blocks.
+  * Document: snapshot.documents[] only.
+- Make deliverables explicit: export, ownership, what user receives.
+
+COPY RULES
+- No buzzword soup. Avoid: ${GENERIC_BAD.join(", ")}.
+- Be concrete: audience, outcomes, scope, deliverables, and next steps.
 `.trim();
 }
 
-function buildSystemPrompt(brief: string, buildType: BuildType, opts: { documentCategory?: DocumentItem["category"] | null; jurisdiction?: string | null }) {
+function buildSystemPrompt(
+  brief: string,
+  buildType: BuildType,
+  opts: { documentCategory?: DocumentItem["category"] | null; jurisdiction?: string | null }
+) {
   if (buildType === "document") {
     const docNudge =
       opts.documentCategory || opts.jurisdiction
-        ? `\nDOCUMENT TARGETING:\n- The user selected category="${opts.documentCategory || "n/a"}" and jurisdiction="${opts.jurisdiction || "n/a"}".\n- Draft the correct document immediately. Avoid asking questions unless truly necessary.\n`
+        ? `\nDOCUMENT TARGETING:\n- The user selected category="${opts.documentCategory || "n/a"}" and jurisdiction="${opts.jurisdiction || "n/a"}".\n- Draft the correct document immediately. Avoid questions unless truly necessary.\n`
         : "";
 
     return `
-You are Buildlio — a professional document drafter (letters, contracts, policies, templates).
-Your output reads like a real firm drafted it: structured, clear, consistent, and ready to export.
+You are Buildlio — an ultra high-trust, professional document generator.
+You do NOT write strategy. You generate export-ready artifacts.
 
 ABSOLUTE OUTPUT RULES:
 - Output ONLY a SINGLE valid JSON object.
 - No markdown, no backticks, no commentary.
 - Must be strict JSON (double quotes only).
 
-RESPONSE TYPES:
-1) If you truly need more details (rare):
-{ "type": "chat", "message": "Warm, helpful reply + 1–2 laser-focused questions." }
+BANNED CONTENT (FAIL THE BUILD):
+- Any mention of: "Estimated Timeline", "Technical Stack Recommendation", "Performance Targets", "Information Architecture", "Core Web Vitals", "Lighthouse".
 
-2) Otherwise build immediately:
+RESPONSE TYPES:
+1) Rare: need one missing detail
+{ "type": "chat", "message": "Warm, helpful. Ask 1–2 laser-focused questions. Nothing else." }
+
+2) Default: build now
 {
   "type": "build",
-  "message": "Your document draft is ready.",
+  "message": "Your document draft is ready to export.",
   "snapshot": {
     "appName": "Buildlio Documents",
     "meta": { "buildType": "document", "intent": "one sentence intent" },
     "documents": [
       {
         "id": "doc_1",
-        "title": "Cease and Desist Letter — Defamation / Harassment",
-        "category": "cease_and_desist",
-        "jurisdiction": "Virginia",
+        "title": "…",
+        "category": "…",
+        "jurisdiction": "…",
         "format": "html",
-        "body_html": "<h1>...</h1><p>...</p><h2>...</h2>...",
+        "body_html": "<h1>…</h1><p>…</p><h2>…</h2>…",
         "fields": [{"key":"sender_name","label":"Sender Name","type":"text","required":true}],
         "warnings": ["Not legal advice. Consider attorney review for your jurisdiction."]
       }
@@ -510,46 +561,44 @@ RESPONSE TYPES:
 
 DOCUMENT RULES (NON-NEGOTIABLE):
 - Do NOT output snapshot.pages.
-- Output snapshot.documents as an array with at least 1 document.
-- Each document body_html MUST include:
-  * Title heading (<h1>)
-  * Section headings (<h2>/<h3>)
-  * Paragraphs (<p>)
-  * A short “Not legal advice” disclaimer section
-  * Clear placeholders like [Name], [Address], [Date], etc where needed
-- Tone: professional, calm, firm (never threatening violence; never illegal instructions).
-- Avoid claiming you are a lawyer. Encourage review by counsel where appropriate.
+- body_html MUST include: <h1>, multiple <h2>/<h3>, many <p>, placeholders like [Name], [Address], [Date].
+- Must include a short “Not legal advice” section. Encourage counsel review where appropriate.
+- Tone: professional, calm, firm. Never illegal instructions. Never claim you are a lawyer.
 
 DECISION RULE:
-- If the user has ANY context, build immediately.
-- Only ask questions if user gave no usable context at all.
+- If the user gave ANY usable context, build immediately.
+- Only ask questions if no usable context exists at all.
 ${docNudge}
 ${brief}
 `.trim();
   }
 
   return `
-You are Buildlio — a world-class AI website architect AND elite conversion copywriter.
-Your output reads like a real agency deliverable: specific, persuasive, premium, modern, and grounded.
+You are Buildlio — an ultra high-tech website generator.
+You do NOT write strategy or architecture docs. You generate exportable page blocks.
 
 ABSOLUTE OUTPUT RULES:
 - Output ONLY a SINGLE valid JSON object.
 - No markdown, no backticks, no commentary.
 - Must be strict JSON (double quotes only).
 
-RESPONSE TYPES:
-1) If you truly need more details (rare):
-{ "type": "chat", "message": "Warm, helpful reply + 1–2 laser-focused questions." }
+BANNED CONTENT (FAIL THE BUILD):
+- Any mention of: "Estimated Timeline", "Technical Stack Recommendation", "Performance Targets", "Information Architecture", "Core Web Vitals", "Lighthouse".
+- Any "Would you like me to elaborate" style closing.
 
-2) Otherwise build immediately:
+RESPONSE TYPES:
+1) Rare: need one missing detail
+{ "type": "chat", "message": "Warm, helpful. Ask 1–2 laser-focused questions. Nothing else." }
+
+2) Default: build now
 {
   "type": "build",
-  "message": "A premium snapshot is ready.",
+  "message": "Your premium snapshot is ready to export.",
   "snapshot": {
     "appName": "Brand Name",
     "tagline": "Short, punchy, specific tagline",
     "meta": { "buildType": "website", "intent": "one sentence intent" },
-    "navigation": { "items": ["Home", "Features", "Pricing", "About", "Contact"] },
+    "navigation": { "items": ["Home", "Work", "About", "Resume", "Contact"] },
     "pages": [
       {
         "slug": "index",
@@ -581,16 +630,14 @@ NON-NEGOTIABLE STRUCTURE:
   * faq.items: EXACTLY 7
 
 BUILD-TYPE BEHAVIOR:
-- If meta.buildType is "landing_page": keep nav minimal; pricing can be framed as “Plans for ongoing optimization” (still 3 plans).
-- If "store": nav should include Store, Products, Shipping, Returns, Contact (still keep 5 items total — adapt names).
-- If "application": nav should include Overview, Features, Security, Pricing, Contact (still 5 items).
-- If "other": infer a logical 5-item nav.
+- landing_page: nav minimal; still keep required blocks.
+- store: nav names adapted for ecommerce; keep required blocks.
+- application: nav names adapted for portal/app; keep required blocks.
+- website: feel like a premium modern agency build; thorough, helpful, export-ready.
 
-COPY “WOW” RULES:
-- No buzzword soup. Avoid: innovative, cutting-edge, next-level, revolutionize, game-changer, best-in-class, synergy.
-- Be concrete: audience, outcome, deliverables, timeline, ownership/export.
-- Make the copy feel personal and confident, not rushed.
-- Never fabricate major facts. If a detail is unknown, phrase it as an option or typical range.
+STYLE TARGET:
+- Ultra high-tech refined minimalism. Precise wording. Friendly and thorough.
+- No strategy sections — all substance must live inside blocks.
 
 ${brief}
 `.trim();
@@ -601,20 +648,28 @@ function buildPolishInstruction(messages: any[], reason: string, buildType: Buil
   const ctx = safeString(lastUser?.content).slice(0, 1800);
 
   return `
-Your previous output failed our quality gate.
+POLISH PASS — REBUILD AS ARTIFACTS (NOT A MEMO)
 Failure reason: ${reason}
 Build type: ${buildType}
 
-Rebuild from scratch with significantly stronger, more specific premium copy.
-Follow the exact output structure required for this build type.
-For document builds: output snapshot.documents ONLY (no pages).
-For non-document builds: output snapshot.pages ONLY (no documents).
+DO THIS:
+- Rebuild from scratch.
+- Output strict JSON only (no markdown, no backticks).
+- If non-document: output snapshot.pages ONLY (no documents).
+- If document: output snapshot.documents ONLY (no pages).
+- Do NOT include any strategy headings or recommendations.
 
-User context:
+BANNED PHRASES:
+${CONSULTING_MEMO_PHRASES.map((x) => `- ${x}`).join("\n")}
+
+USER CONTEXT:
 ${ctx}
 `.trim();
 }
 
+/* -----------------------------
+ANCHOR:POST
+-------------------------------- */
 export async function POST(req: Request) {
   try {
     const body = await req.json();
@@ -622,15 +677,12 @@ export async function POST(req: Request) {
     const projectId = String(body.projectId || "");
     const messages = body.messages || [];
 
-    // Vision Splash Flow / UI hints (optional)
     const splashChoice = canonicalizeSplashChoice(body.splashChoice) || null;
     const buildConsoleMode = canonicalizeBuildConsoleMode(body.buildConsoleMode) || null;
 
-    // Document “second-step chooser” (optional)
     const documentCategory = canonicalizeDocumentCategory(body.documentCategory) || null;
     const jurisdiction = isNonEmptyString(body.jurisdiction) ? String(body.jurisdiction).trim() : null;
 
-    // Prefer explicit buildType from UI. Fallback to detection.
     const explicitType = canonicalizeBuildType(body.buildType);
     const detected = detectBuildTypeFromText(messages);
     const buildType: BuildType = explicitType || detected || "website";
@@ -661,7 +713,7 @@ export async function POST(req: Request) {
       const aiResponse = await anthropic.messages.create({
         model: "claude-sonnet-4-6",
         max_tokens: 11000,
-        temperature: 0.64,
+        temperature: 0.62,
         system: systemPrompt,
         messages: callMessages,
       });
@@ -685,7 +737,6 @@ export async function POST(req: Request) {
         (parsed as any).snapshot.meta = (parsed as any).snapshot.meta || {};
         (parsed as any).snapshot.meta.buildType = (parsed as any).snapshot.meta.buildType || buildType;
 
-        // Preserve Vision Splash Flow + chooser hints in meta (non-breaking)
         if (splashChoice) (parsed as any).snapshot.meta.splashChoice = (parsed as any).snapshot.meta.splashChoice || splashChoice;
         if (buildConsoleMode) (parsed as any).snapshot.meta.buildConsoleMode = (parsed as any).snapshot.meta.buildConsoleMode || buildConsoleMode;
 
@@ -720,15 +771,15 @@ export async function POST(req: Request) {
         type: "chat",
         message:
           buildType === "document"
-            ? "Quick detail so I can draft this properly: what document do you need (letter/cease & desist/bill of sale/health guarantee/contract/policy), what state/jurisdiction, and who are the parties? One sentence is perfect."
-            : "Quick detail so I can make this truly specific: what are you creating (website, landing page, store, application, or document) and who is it for? One sentence is perfect. You can start with: TYPE: store",
+            ? "One quick detail so I can generate the correct draft: what document category (letter/contract/policy/etc.) and what jurisdiction/state? If you want, paste any key names/dates in one line."
+            : "One quick detail so I can generate the right snapshot: what are you building (TYPE: website / landing_page / store / application) and who is it for? One sentence is perfect.",
       };
       return NextResponse.json({ success: true, data: fallback });
     }
 
     // Save & charge only on build
     if (parsedResponse.type === "build" && (parsedResponse as any).snapshot) {
-      const noteParts = [`Professional Build v5.5 (${buildType})`];
+      const noteParts = [`Professional Build v5.6 (${buildType})`];
       if (splashChoice) noteParts.push(`splash:${splashChoice}`);
       if (buildConsoleMode) noteParts.push(`console:${buildConsoleMode}`);
       if (buildType === "document" && documentCategory) noteParts.push(`doc:${documentCategory}`);
