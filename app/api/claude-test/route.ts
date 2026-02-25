@@ -450,7 +450,7 @@ export async function POST(req: Request) {
 
       const jsonText = extractJson(rawText);
       const parsed = safeJsonParse(jsonText);
-      return { parsed, gate: null as const, rawText };
+      return { parsed, gate: null, rawText };
     }
 
     // Attempt 1
