@@ -143,7 +143,7 @@ export default function BuildlioApp() {
   function exportWebsiteHTML() {
     if (!snapshot || !isSiteSnapshot(snapshot)) return;
 
-    const currentPage = snapshot.pages?.find((p) => p.slug === activePageSlug) || snapshot.pages?.[0];
+    const currentPage = snapshot.pages?.find((p: any) => p.slug === activePageSlug) || snapshot.pages?.[0];
     if (!currentPage) return;
 
     const navItems = snapshot.navigation?.items || ["Home", "Features", "Pricing", "About", "Contact"];
@@ -167,14 +167,14 @@ export default function BuildlioApp() {
 ${tagline ? `<div class="text-sm text-zinc-500 ml-2">${tagline}</div>` : ""}
 </div>
 <div class="flex items-center gap-10 text-sm font-medium">
-${navItems.map((item) => `<a href="#" class="hover:text-cyan-700 transition">${item}</a>`).join("")}
+${navItems.map((item: any) => `<a href="#" class="hover:text-cyan-700 transition">${item}</a>`).join("")}
 </div>
 <a href="#" class="bg-zinc-900 text-white px-8 py-3 rounded-2xl font-semibold hover:bg-black transition">Get Started</a>
 </div>
 </nav>
 <main>
 ${(currentPage.blocks || [])
-  .map((block) => {
+  .map((block: any) => {
     if (block.type === "hero")
       return `
 <section class="py-32 bg-gradient-to-br from-zinc-900 to-black text-white text-center">
@@ -322,7 +322,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
 </div>
 <div>
 <div class="font-semibold text-white mb-4">Product</div>
-<div class="space-y-3 text-sm">${navItems.map((i) => `<div>${i}</div>`).join("")}</div>
+<div class="space-y-3 text-sm">${navItems.map((i: any) => `<div>${i}</div>`).join("")}</div>
 </div>
 <div>
 <div class="font-semibold text-white mb-4">Company</div>
@@ -351,7 +351,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
     if (!snapshot || !isDocSnapshot(snapshot)) return;
 
     const docs = snapshot.documents || [];
-    const active = docs.find((d) => d.id === activeDocId) || docs[0];
+    const active = docs.find((d: any) => d.id === activeDocId) || docs[0];
     if (!active) return;
 
     const title = active.title || "document";
@@ -701,7 +701,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                   {history.length === 0 ? (
                     <p className="text-zinc-500">No versions yet. Build your first one!</p>
                   ) : (
-                    history.map((v, i) => (
+                    history.map((v: any, i: number) => (
                       <div key={i} className="mb-4 bg-zinc-50 border border-zinc-200 rounded-3xl p-5 text-sm">
                         <div className="flex justify-between text-xs">
                           <span>Version {v.version_no}</span>
@@ -720,7 +720,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
               <div className="h-14 border-b border-zinc-200 bg-white flex items-center px-6 gap-2 overflow-x-auto">
                 {buildType !== "document" && isSiteSnapshot(snapshot) && (
                   <>
-                    {snapshot.pages.map((p) => (
+                    {snapshot.pages.map((p: any) => (
                       <button
                         key={p.slug}
                         onClick={() => setActivePageSlug(p.slug)}
@@ -752,7 +752,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
                 <DocumentPreview
                   snapshot={isDocSnapshot(snapshot) ? snapshot : null}
                   activeDocId={activeDocId}
-                  onSelectDoc={(id) => setActiveDocId(id)}
+                  onSelectDoc={(id: any) => setActiveDocId(id)}
                 />
               ) : (
                 <SitePreview snapshot={isSiteSnapshot(snapshot) ? snapshot : null} activePageSlug={activePageSlug} />
