@@ -1,5 +1,15 @@
-/* FILE: app/api/claude-test/route.ts */
-// BUILDLIO.SITE — v5.6 Backend (Ultra Hi-Tech Builder Tone + Anti-Summary Gates + Stronger Creative Brief)
+/* FILE: app/api/claude-test/route.ts
+   BUILDLIO.SITE — v5.6.1 Backend
+   Fixes + Enhancements:
+   - FIX: Next cookies integration (setAll actually writes cookies)
+   - FIX: cookies() is sync (no await) + safer Supabase SSR client wiring
+   - FIX: Robust Claude text extraction (handles multi-part content)
+   - FIX: Robust JSON extraction + parse fallback (never throws on bad JSON)
+   - IMPROVE: BuildType canonicalization supports UI values (agent/app/website/store/document/other)
+   - IMPROVE: Hard-gates applied to RAW model output (before JSON stringify loses markdown signal)
+   - IMPROVE: Stronger “artifact-only” system prompt + meta passthrough
+   - IMPROVE: Better failure returns (clear, actionable) + optional 3rd retry
+*/
 
 import { Anthropic } from "@anthropic-ai/sdk";
 import { createServerClient } from "@supabase/ssr";
@@ -10,15 +20,54 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 90;
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY || "",
-});
+/* -----------------------------
+ANCHOR:CONFIG
+-------------------------------- */
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || "";
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SUPABASE_ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
 
-type BuildType = "website" | "landing_page" | "application" | "document" | "store" | "other";
+// Prefer env override, else default to a stable Claude Sonnet model.
+// NOTE: Use the exact model string your account supports.
+const DEFAULT_MODEL = process.env.BUILDLIO_ANTHROPIC_MODEL || "claude-3-5-sonnet-20241022";
 
-// Vision Splash Flow hints (optional; UI-driven)
+const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
+
+type BuildType =
+  | "website"
+  | "landing_page"
+  | "application"
+  | "document"
+  | "store"
+  | "other"
+  // UI-only types (we canonicalize them)
+  | "agent"
+  | "app";
+
 type SplashChoice = "sync" | "sploosh" | "ripple" | "none";
 type BuildConsoleMode = "white_console" | "standard" | "none";
+
+type DocumentCategory =
+  | "letter"
+  | "cease_and_desist"
+  | "bill_of_sale"
+  | "health_guarantee"
+  | "contract"
+  | "policy"
+  | "packet"
+  | "proposal"
+  | "other";
+
+type DocumentItem = {
+  id: string;
+  title: string;
+  category: DocumentCategory;
+  jurisdiction?: string;
+  format: "html";
+  body_html: string;
+  fields?: Array<{ key: string; label: string; type: "text" | "date" | "number" | "checkbox"; required?: boolean }>;
+  warnings?: string[];
+};
 
 type SiteSnapshot = {
   appName: string;
@@ -27,33 +76,12 @@ type SiteSnapshot = {
   meta?: {
     buildType?: BuildType;
     intent?: string;
-
     splashChoice?: SplashChoice;
     buildConsoleMode?: BuildConsoleMode;
-    documentCategory?: DocumentItem["category"];
+    documentCategory?: DocumentCategory;
     jurisdiction?: string;
   };
   pages: Array<{ slug: string; title?: string; blocks: any[] }>;
-};
-
-type DocumentItem = {
-  id: string;
-  title: string;
-  category:
-    | "letter"
-    | "cease_and_desist"
-    | "bill_of_sale"
-    | "health_guarantee"
-    | "contract"
-    | "policy"
-    | "packet"
-    | "proposal"
-    | "other";
-  jurisdiction?: string;
-  format: "html";
-  body_html: string;
-  fields?: Array<{ key: string; label: string; type: "text" | "date" | "number" | "checkbox"; required?: boolean }>;
-  warnings?: string[];
 };
 
 type DocSnapshot = {
@@ -61,10 +89,9 @@ type DocSnapshot = {
   meta?: {
     buildType?: BuildType;
     intent?: string;
-
     splashChoice?: SplashChoice;
     buildConsoleMode?: BuildConsoleMode;
-    documentCategory?: DocumentItem["category"];
+    documentCategory?: DocumentCategory;
     jurisdiction?: string;
   };
   documents: DocumentItem[];
@@ -97,15 +124,39 @@ function containsAny(haystack: string, needles: string[]) {
   return needles.some((n) => h.includes(String(n).toLowerCase()));
 }
 
-// Tries hard to extract the first valid JSON object from model text.
+/**
+ * Extract the first plausible JSON object from a raw model response.
+ * - Tries to find the first "{" and its matching ending "}" by lastIndex.
+ * - If that fails, returns "{}" (never throws).
+ */
 function extractJson(raw: string) {
-  let out = raw || "{}";
-  const firstBrace = out.indexOf("{");
-  const lastBrace = out.lastIndexOf("}");
+  const text = raw || "";
+  const firstBrace = text.indexOf("{");
+  const lastBrace = text.lastIndexOf("}");
   if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    out = out.slice(firstBrace, lastBrace + 1);
+    return text.slice(firstBrace, lastBrace + 1).trim();
   }
-  return out.trim();
+  return "{}";
+}
+
+function safeJsonParse(raw: string): any {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Claude may return multiple content blocks.
+ * Pull all text blocks and join.
+ */
+function extractClaudeText(aiResponse: any): string {
+  const parts = arr(aiResponse?.content);
+  const texts = parts
+    .map((p: any) => (p?.type === "text" ? safeString(p.text) : ""))
+    .filter((t: string) => t.length > 0);
+  return texts.join("\n").trim();
 }
 
 /* -----------------------------
@@ -126,14 +177,14 @@ const CONSULTING_MEMO_PHRASES = [
   "i can elaborate",
   "let me know if you want",
   "here’s a breakdown",
+  "here's a breakdown",
   "scope:",
   "supporting pages",
   "technical standards",
 ];
 
-function snapshotLooksLikeMemo(parsed: any): boolean {
-  const s = JSON.stringify(parsed || {});
-  return containsAny(s, CONSULTING_MEMO_PHRASES);
+function rawLooksLikeMemo(rawText: string): boolean {
+  return containsAny(rawText || "", CONSULTING_MEMO_PHRASES);
 }
 
 /* -----------------------------
@@ -144,36 +195,30 @@ const AGENT_SPEC_FINGERPRINTS = [
   "core directive",
   "success metrics",
   "available tools",
-  "data collection",
-  "action & communication",
-  "decision support",
+  "role-based permissions",
+  "least privilege",
+  "gdpr/ccpa",
   "escalation triggers",
   "critical guardrails",
   "fail-safe mechanisms",
   "operational framework",
   "continuous learning loop",
-  "role-based permissions",
-  "least privilege",
-  "gdpr/ccpa",
-  "risk prediction",
-  "uptime",
-  "yaml",
   "prohibited actions",
   "circuit breakers",
 ];
 
 function containsMarkdownish(raw: string) {
   const s = raw || "";
-  if (/(^|\n)\s*#{2,}\s+/m.test(s)) return true;
+  if (/(^|\n)\s*#{1,6}\s+/m.test(s)) return true;
   if (/```/.test(s)) return true;
-  if (/(^|\n)\s*-\s+\*\*/m.test(s)) return true;
+  if (/(^|\n)\s*-\s+/.test(s)) return true;
   return false;
 }
 
-function looksLikeAgentSpec(obj: any) {
-  const s = JSON.stringify(obj || {}).toLowerCase();
+function rawLooksLikeAgentSpec(rawText: string) {
+  const s = (rawText || "").toLowerCase();
   if (containsAny(s, AGENT_SPEC_FINGERPRINTS)) return true;
-  if (containsMarkdownish(s)) return true;
+  if (containsMarkdownish(rawText)) return true;
   return false;
 }
 
@@ -194,6 +239,7 @@ function shapeGate(parsed: any, buildType: BuildType): { ok: boolean; reason?: s
   const hasPages = Array.isArray((snap as any).pages);
   const hasDocs = Array.isArray((snap as any).documents);
 
+  // Canonical doc check
   if (buildType === "document") {
     if (hasPages && (snap as any).pages?.length) return { ok: false, reason: "Document build must not include pages" };
     if (!hasDocs) return { ok: false, reason: "Document build missing documents[]" };
@@ -201,46 +247,11 @@ function shapeGate(parsed: any, buildType: BuildType): { ok: boolean; reason?: s
     return { ok: true };
   }
 
-  if (hasDocs && (snap as any).documents?.length) return { ok: false, reason: "Website build must not include documents" };
+  // Non-doc: must be pages-only
+  if (hasDocs && (snap as any).documents?.length) return { ok: false, reason: "Non-document build must not include documents" };
   if (!hasPages) return { ok: false, reason: "Non-document build missing pages[]" };
   if (!isNonEmptyString((snap as any).appName)) return { ok: false, reason: "Missing appName" };
   return { ok: true };
-}
-
-/* -----------------------------
-ANCHOR:COPY_QUALITY
--------------------------------- */
-const GENERIC_BAD = [
-  "innovative",
-  "cutting-edge",
-  "next-level",
-  "revolutionize",
-  "game-changer",
-  "best-in-class",
-  "synergy",
-  "unlock your potential",
-  "elevate your",
-  "we are passionate",
-  "state-of-the-art",
-  "seamless solution",
-  "powerful platform",
-  "ultimate",
-];
-
-const TOO_VAGUE = ["for everyone", "for anyone", "all businesses", "any business", "top-notch", "amazing", "incredible", "unmatched"];
-
-function hasSpecificitySignals(text: string) {
-  const t = (text || "").toLowerCase();
-  const hasNumber = /\d/.test(t);
-  const hasConcreteNouns =
-    /(calls|bookings|leads|appointments|orders|checkout|invoices|quotes|estimates|calendar|crm|pipeline|onboarding|templates|contracts|deliverables|export|ownership|domain|storefront|catalog|cart|sku|inventory|shipping|case study|case studies|portfolio|resume|cv|speaking|talks|engagements)/.test(
-      t
-    );
-  const hasAudience =
-    /(for (senior|executive|busy|solo|independent|new|growing|service|trade|clinic|salon|agency|coach|creator|designer|architect|consultant|founder|studio|team|company|brand|enterprise))/i.test(
-      text || ""
-    );
-  return hasNumber || (hasConcreteNouns && hasAudience);
 }
 
 /* -----------------------------
@@ -252,14 +263,31 @@ function canonicalizeBuildType(raw: any): BuildType | null {
 
   const t = t0.replace(/[-\s]+/g, "_").replace(/__+/g, "_").trim();
 
+  // UI values
+  if (t === "agent") return "agent";
+  if (t === "app") return "app";
+
+  // Canonical values
   if (t === "landing" || t === "landingpage" || t === "landing_page") return "landing_page";
   if (t === "website") return "website";
-  if (t === "application" || t === "app" || t === "portal") return "application";
+  if (t === "application" || t === "portal") return "application";
   if (t === "document" || t === "documents" || t === "docs") return "document";
   if (t === "store" || t === "shop" || t === "ecommerce") return "store";
   if (t === "other") return "other";
 
   return null;
+}
+
+/**
+ * IMPORTANT: your front-end uses buildType like:
+ * website | agent | store | document | app | other
+ * But your backend artifact validators are “document vs non-document”.
+ * We keep agent/app as non-document.
+ */
+function toArtifactBuildType(t: BuildType): Exclude<BuildType, "agent" | "app"> {
+  if (t === "agent") return "application"; // treat agents as app-like UI artifacts
+  if (t === "app") return "application";
+  return t as Exclude<BuildType, "agent" | "app">;
 }
 
 function canonicalizeSplashChoice(raw: any): SplashChoice | null {
@@ -283,16 +311,27 @@ function canonicalizeBuildConsoleMode(raw: any): BuildConsoleMode | null {
   return null;
 }
 
-function canonicalizeDocumentCategory(raw: any): DocumentItem["category"] | null {
+function canonicalizeDocumentCategory(raw: any): DocumentCategory | null {
   const t = normalizeWhitespace(raw).toLowerCase();
   if (!t) return null;
   const x = t.replace(/[-\s]+/g, "_").trim();
 
-  const allowed: Record<string, DocumentItem["category"]> = {
-    letter: "letter", cease_and_desist: "cease_and_desist", cease: "cease_and_desist", cnd: "cease_and_desist",
-    bill_of_sale: "bill_of_sale", bill: "bill_of_sale", sale: "bill_of_sale", health_guarantee: "health_guarantee",
-    guarantee: "health_guarantee", contract: "contract", agreement: "contract", policy: "policy",
-    packet: "packet", proposal: "proposal", other: "other",
+  const allowed: Record<string, DocumentCategory> = {
+    letter: "letter",
+    cease_and_desist: "cease_and_desist",
+    cease: "cease_and_desist",
+    cnd: "cease_and_desist",
+    bill_of_sale: "bill_of_sale",
+    bill: "bill_of_sale",
+    sale: "bill_of_sale",
+    health_guarantee: "health_guarantee",
+    guarantee: "health_guarantee",
+    contract: "contract",
+    agreement: "contract",
+    policy: "policy",
+    packet: "packet",
+    proposal: "proposal",
+    other: "other",
   };
 
   return allowed[x] || null;
@@ -302,12 +341,19 @@ function detectBuildTypeFromText(messages: any[]): BuildType | null {
   const lastUser = [...(messages || [])].reverse().find((m) => m?.role === "user");
   const t = normalizeWhitespace(lastUser?.content).toLowerCase();
 
-  const m = t.match(/(^|\n)\s*type\s*:\s*(website|landing[_\-\s]*page|landingpage|landing|application|app|portal|document|documents|docs|store|shop|ecommerce|other)\s*(\n|$)/i);
+  const m = t.match(
+    /(^|\n)\s*type\s*:\s*(website|landing[_\-\s]*page|landingpage|landing|application|app|portal|agent|document|documents|docs|store|shop|ecommerce|other)\s*(\n|$)/i
+  );
   if (m?.[2]) return canonicalizeBuildType(m[2]);
 
+  if (/(agent|autonomous|assistant|workflow agent|support agent|sales agent|ops agent)/i.test(t)) return "agent";
   if (/(store|shop|checkout|cart|products|sku|inventory|shipping|returns)/i.test(t)) return "store";
   if (/(application|dashboard|login|roles|admin|workflow|crud|portal|audit trail)/i.test(t)) return "application";
-  if (/(document|documents|letter|letters|proposal|contract|policy|terms|agreement|handbook|guide|cease and desist|bill of sale|health guarantee)/i.test(t))
+  if (
+    /(document|documents|letter|letters|proposal|contract|policy|terms|agreement|handbook|guide|cease and desist|bill of sale|health guarantee)/i.test(
+      t
+    )
+  )
     return "document";
   if (/(landing page|single page|one page|lead capture|waitlist|signup|book a call)/i.test(t)) return "landing_page";
   if (t.length > 0) return "website";
@@ -318,10 +364,19 @@ function detectBuildTypeFromText(messages: any[]): BuildType | null {
 /* -----------------------------
 ANCHOR:VALIDATORS
 -------------------------------- */
+function snapshotLooksLikeMemo(parsed: any): boolean {
+  const s = JSON.stringify(parsed || {});
+  return containsAny(s, CONSULTING_MEMO_PHRASES);
+}
+function looksLikeAgentSpecObject(obj: any) {
+  const s = JSON.stringify(obj || {}).toLowerCase();
+  return containsAny(s, AGENT_SPEC_FINGERPRINTS);
+}
+
 function validateWebsiteBuild(parsed: any): { ok: boolean; reason?: string } {
   if (parsed?.type !== "build") return { ok: false, reason: "Not a build response" };
-  if (snapshotLooksLikeMemo(parsed)) return { ok: false, reason: "Output looks like strategy plan" };
-  if (looksLikeAgentSpec(parsed)) return { ok: false, reason: "Output resembles agent specification" };
+  if (snapshotLooksLikeMemo(parsed)) return { ok: false, reason: "Output looks like strategy memo" };
+  if (looksLikeAgentSpecObject(parsed)) return { ok: false, reason: "Output resembles agent specification" };
 
   const snap = parsed?.snapshot;
   if (!snap) return { ok: false, reason: "Missing snapshot" };
@@ -336,7 +391,7 @@ function validateWebsiteBuild(parsed: any): { ok: boolean; reason?: string } {
   const types = new Set(blocks.map((b: any) => b?.type));
   for (const r of required) if (!types.has(r)) return { ok: false, reason: `Missing block: ${r}` };
 
-  // EXACT COUNTS ENFORCEMENT
+  // Exact counts
   if (arr(getBlock(blocks, "features")?.items).length !== 6) return { ok: false, reason: "Features must contain exactly 6 items" };
   if (arr(getBlock(blocks, "stats")?.stats).length !== 4) return { ok: false, reason: "Stats must contain exactly 4 items" };
   if (arr(getBlock(blocks, "testimonials")?.items).length !== 3) return { ok: false, reason: "Testimonials must contain exactly 3 items" };
@@ -349,74 +404,114 @@ function validateWebsiteBuild(parsed: any): { ok: boolean; reason?: string } {
 function validateDocumentBuild(parsed: any): { ok: boolean; reason?: string } {
   if (parsed?.type !== "build") return { ok: false, reason: "Not a build response" };
   if (snapshotLooksLikeMemo(parsed)) return { ok: false, reason: "Output looks like a memo" };
-  if (looksLikeAgentSpec(parsed)) return { ok: false, reason: "Output resembles agent specification" };
+  if (looksLikeAgentSpecObject(parsed)) return { ok: false, reason: "Output resembles agent specification" };
 
   const snap = parsed?.snapshot;
   if (!snap) return { ok: false, reason: "Missing snapshot" };
+  if (!isNonEmptyString(snap.appName)) return { ok: false, reason: "Missing appName" };
+
   const docs = arr(snap.documents);
   if (docs.length < 1) return { ok: false, reason: "Missing documents[]" };
 
   for (const d of docs) {
     if (safeString(d?.body_html).length < 600) return { ok: false, reason: "Document body too short" };
-    if (!/<h1[\\s>]|<h2[\\s>]/i.test(d?.body_html)) return { ok: false, reason: "Document needs headings/sections" };
+    if (!/<h1[\s>]|<h2[\s>]/i.test(d?.body_html)) return { ok: false, reason: "Document needs headings/sections" };
   }
   return { ok: true };
 }
 
-function validateBuildResponse(parsed: any, buildType: BuildType): { ok: boolean; reason?: string } {
-  const sg = shapeGate(parsed, buildType);
+function validateBuildResponse(parsed: any, artifactBuildType: Exclude<BuildType, "agent" | "app">): { ok: boolean; reason?: string } {
+  const sg = shapeGate(parsed, artifactBuildType);
   if (!sg.ok) return sg;
   if (parsed.type === "chat") return { ok: true };
-  if (buildType === "document") return validateDocumentBuild(parsed);
+  if (artifactBuildType === "document") return validateDocumentBuild(parsed);
   return validateWebsiteBuild(parsed);
 }
 
 /* -----------------------------
 ANCHOR:PROMPTS
 -------------------------------- */
-function buildCreativeBrief(messages: any[], buildType: BuildType, opts: any) {
+function buildCreativeBrief(messages: any[], buildType: Exclude<BuildType, "agent" | "app">, opts: any) {
   const lastUser = [...(messages || [])].reverse().find((m) => m?.role === "user");
-  const userText = safeString(lastUser?.content).slice(0, 2500);
+  const userText = safeString(lastUser?.content).slice(0, 3000);
+
+  const splashChoice = canonicalizeSplashChoice(opts?.splashChoice) || canonicalizeSplashChoice(opts?.snapshot?.meta?.splashChoice);
+  const buildConsoleMode = canonicalizeBuildConsoleMode(opts?.buildConsoleMode) || canonicalizeBuildConsoleMode(opts?.snapshot?.meta?.buildConsoleMode);
+  const documentCategory = canonicalizeDocumentCategory(opts?.documentCategory) || canonicalizeDocumentCategory(opts?.snapshot?.meta?.documentCategory);
+  const jurisdiction = normalizeWhitespace(opts?.jurisdiction) || normalizeWhitespace(opts?.snapshot?.meta?.jurisdiction);
 
   return `
-CREATIVE BRIEF (BUILDER MODE — OUTPUT ARTIFACTS, NOT A MEMO)
+CREATIVE BRIEF (BUILDER MODE — OUTPUT ARTIFACTS ONLY)
 - Build type: ${buildType}
-- Objective: Generate exact UI blocks or Document HTML.
-- Aesthetic: Ultra high-tech refined minimalism. Friendly and thorough.
-- Hard Constraint: NO architecture/timeline/stack recommendations.
-- Hard Constraint: NO mission/tools/guardrails spec text.
-- User request: ${userText}
+- Objective: Generate exportable UI blocks (pages[]) OR document HTML (documents[]). No memo. No summary plan.
+- Tone: Ultra high-tech refined minimalism. Concrete and specific. No filler.
+- Constraints:
+  * NO timelines, NO stack recommendations, NO “here’s a breakdown”, NO “let me know if you want more”.
+  * NO agent-spec templates (mission/tools/guardrails frameworks).
+- Optional UI meta (include in snapshot.meta when provided):
+  * splashChoice: ${splashChoice || "not specified"}
+  * buildConsoleMode: ${buildConsoleMode || "not specified"}
+  * documentCategory: ${documentCategory || "not specified"}
+  * jurisdiction: ${jurisdiction || "not specified"}
+- User request:
+${userText}
 `.trim();
 }
 
-function buildSystemPrompt(brief: string, buildType: BuildType, opts: any) {
-  const structure = buildType === "document" 
-    ? "Output snapshot.documents[] ONLY. NO snapshot.pages."
-    : "Output snapshot.pages[] with EXACT blocks: hero, features (exactly 6 items), stats (exactly 4), testimonials (exactly 3), pricing (exactly 3 plans), faq (exactly 7), content, cta.";
+function buildSystemPrompt(brief: string, buildType: Exclude<BuildType, "agent" | "app">) {
+  const structure =
+    buildType === "document"
+      ? `OUTPUT snapshot.documents[] ONLY.
+- MUST NOT include snapshot.pages at all.
+- Each document: format="html", body_html must be real HTML with headings (<h1>/<h2>) and substantial sections.
+`
+      : `OUTPUT snapshot.pages[] ONLY.
+- MUST NOT include snapshot.documents at all.
+- The FIRST page (index) MUST include EXACT blocks:
+  hero, features (exactly 6 items), stats (exactly 4),
+  testimonials (exactly 3), pricing (exactly 3 plans),
+  faq (exactly 7), content, cta.
+`;
 
   return `
-You are Buildlio — an ultra high-tech creation engine.
-You do NOT write strategy or architecture docs. You generate EXPORTABLE ARTIFACTS.
+You are Buildlio — an artifact generation engine.
+You DO NOT write strategy or planning documents. You output runnable/exportable artifacts.
 
 ABSOLUTE OUTPUT RULES:
-- Output ONLY a SINGLE valid JSON object. No markdown. No backticks. No commentary.
-- BANNED: "Estimated Timeline", "Stack Recommendation", "Information Architecture", "Performance Targets".
-- BANNED: "Would you like me to elaborate" style closing.
-- ${structure}
+1) Output ONLY ONE valid JSON object. No markdown. No backticks. No commentary.
+2) BANNED CONTENT:
+   - Timeline / estimates
+   - Stack recommendation / tech stack talk
+   - “Here’s a breakdown” / “Let me know if you want more”
+   - Agent-spec templates (mission/tools/guardrails/frameworks)
+3) Must be specific, concrete, and implementation-ready.
+4) ${structure}
 
-RESPONSE SCHEMA:
+RESPONSE SCHEMA (STRICT):
 {
   "type": "build",
   "message": "Materialization complete. Artifact ready.",
-  "snapshot": { "appName": "...", "pages": [...] or "documents": [...] }
+  "snapshot": {
+    "appName": "…",
+    "tagline": "… (optional)",
+    "meta": { "buildType": "${buildType}", "intent": "… (optional)", "splashChoice": "… (optional)", "buildConsoleMode": "… (optional)", "documentCategory": "… (optional)", "jurisdiction": "… (optional)" },
+    "pages": [ ... ] OR "documents": [ ... ]
+  }
 }
 
 ${brief}
 `.trim();
 }
 
-function buildPolishInstruction(reason: string, buildType: BuildType) {
-  return `POLISH PASS: Previous attempt failed validation: ${reason}. Rebuild as strict JSON artifacts only. NO strategy memos.`.trim();
+function buildPolishInstruction(reason: string, buildType: Exclude<BuildType, "agent" | "app">) {
+  return `
+POLISH PASS: Previous attempt failed validation: ${reason}
+
+REBUILD NOW with strict artifact JSON only.
+- No memo, no summary, no markdown, no backticks.
+- Obey exact block counts/requirements.
+- ${buildType === "document" ? "documents[] only; no pages." : "pages[] only; no documents."}
+`.trim();
 }
 
 /* -----------------------------
@@ -424,69 +519,130 @@ ANCHOR:POST
 -------------------------------- */
 export async function POST(req: Request) {
   try {
+    if (!ANTHROPIC_API_KEY) {
+      return NextResponse.json({ success: false, error: "Server misconfigured: ANTHROPIC_API_KEY missing" }, { status: 500 });
+    }
+    if (!SUPABASE_URL || !SUPABASE_ANON) {
+      return NextResponse.json(
+        { success: false, error: "Server misconfigured: NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY missing" },
+        { status: 500 }
+      );
+    }
+
     const body = await req.json();
-    const { projectId, messages } = body;
+    const projectId = safeString(body?.projectId);
+    const messages = arr(body?.messages);
 
-    const explicitType = canonicalizeBuildType(body.buildType);
+    if (!projectId) return NextResponse.json({ success: false, error: "Missing projectId" }, { status: 400 });
+    if (!messages.length) return NextResponse.json({ success: false, error: "Missing messages[]" }, { status: 400 });
+
+    // Determine build type (explicit -> detected -> default)
+    const explicitType = canonicalizeBuildType(body?.buildType);
     const detected = detectBuildTypeFromText(messages);
-    const buildType: BuildType = explicitType || detected || "website";
+    const rawBuildType: BuildType = (explicitType || detected || "website") as BuildType;
 
-    const cookieStore = await cookies();
-    const supabase = createServerClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      { cookies: { getAll: () => cookieStore.getAll(), setAll: () => {} } }
-    );
+    // Convert UI build types into artifact build types (document vs non-document)
+    const artifactBuildType = toArtifactBuildType(rawBuildType);
 
-    const { data: authData } = await supabase.auth.getUser();
+    const cookieStore = cookies();
+
+    const supabase = createServerClient(SUPABASE_URL, SUPABASE_ANON, {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll();
+        },
+        setAll(cookiesToSet) {
+          // In Route Handlers we can set cookies directly on the store
+          for (const c of cookiesToSet) {
+            cookieStore.set(c.name, c.value, c.options);
+          }
+        },
+      },
+    });
+
+    const { data: authData, error: authErr } = await supabase.auth.getUser();
+    if (authErr) {
+      return NextResponse.json({ success: false, error: "Auth error: " + safeString(authErr.message) }, { status: 401 });
+    }
     if (!authData?.user) return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
 
-    const brief = buildCreativeBrief(messages, buildType, body);
-    const systemPrompt = buildSystemPrompt(brief, buildType, body);
+    const brief = buildCreativeBrief(messages, artifactBuildType, body);
+    const systemPrompt = buildSystemPrompt(brief, artifactBuildType);
 
-    async function runClaude(msgList: any[]) {
+    async function runClaude(msgList: any[], modelOverride?: string) {
       const aiResponse = await anthropic.messages.create({
-        model: "claude-3-5-sonnet-20241022",
-        max_tokens: 11000,
-        temperature: 0.62,
+        model: modelOverride || DEFAULT_MODEL,
+        max_tokens: 6000, // was 11000; smaller is more stable for strict JSON
+        temperature: 0.55,
         system: systemPrompt,
         messages: msgList,
       });
 
-      const rawOutput = aiResponse.content[0].type === 'text' ? aiResponse.content[0].text : "{}";
-      return JSON.parse(extractJson(rawOutput));
+      const rawText = extractClaudeText(aiResponse);
+
+      // HARD-GATE raw output before JSON parsing (catches markdown/spec/memo early)
+      if (rawLooksLikeMemo(rawText)) {
+        return { parsed: null, rawText, gate: "memo" as const };
+      }
+      if (rawLooksLikeAgentSpec(rawText)) {
+        return { parsed: null, rawText, gate: "agent_spec" as const };
+      }
+
+      const jsonText = extractJson(rawText);
+      const parsed = safeJsonParse(jsonText);
+
+      return { parsed, rawText, gate: null as const };
     }
 
     // Attempt 1
-    let parsedResponse = await runClaude(messages);
-    let validation = validateBuildResponse(parsedResponse, buildType);
+    let attempt1 = await runClaude(messages);
+    let parsedResponse: any = attempt1.parsed;
+    let validation = parsedResponse ? validateBuildResponse(parsedResponse, artifactBuildType) : { ok: false, reason: `Model output gated (${attempt1.gate || "invalid_json"})` };
 
     // Attempt 2 (Polish Pass)
     if (!validation.ok) {
-      const polish = buildPolishInstruction(validation.reason || "Invalid structure", buildType);
-      parsedResponse = await runClaude([...messages, { role: "user", content: polish }]);
-      validation = validateBuildResponse(parsedResponse, buildType);
+      const polish = buildPolishInstruction(validation.reason || "Invalid structure", artifactBuildType);
+      const attempt2 = await runClaude([...messages, { role: "user", content: polish }]);
+      parsedResponse = attempt2.parsed;
+      validation = parsedResponse ? validateBuildResponse(parsedResponse, artifactBuildType) : { ok: false, reason: `Polish gated (${attempt2.gate || "invalid_json"})` };
+
+      // Attempt 3 (Final strict nudge) — optional but helps
+      if (!validation.ok) {
+        const finalNudge =
+          `FINAL PASS: Output ONE JSON object only. No text. No markdown. Must pass: ${artifactBuildType === "document" ? "documents[] only" : "pages[] only with required blocks + exact counts"}.`;
+        const attempt3 = await runClaude([...messages, { role: "user", content: polish }, { role: "user", content: finalNudge }]);
+        parsedResponse = attempt3.parsed;
+        validation = parsedResponse ? validateBuildResponse(parsedResponse, artifactBuildType) : { ok: false, reason: `Final gated (${attempt3.gate || "invalid_json"})` };
+      }
     }
 
     if (!validation.ok) {
-      return NextResponse.json({ success: true, data: { type: "chat", message: `Clarity needed: ${validation.reason}.` } });
+      // Return chat response (non-charging) with a very short actionable note
+      return NextResponse.json({
+        success: true,
+        data: {
+          type: "chat",
+          message: `I need one correction to generate artifacts: ${validation.reason}. Please restate the request with a concrete target (pages/features/pricing or doc sections), then re-run.`,
+        } satisfies BuildlioResponse,
+      });
     }
 
-    // SAVE & CHARGE
-    if (parsedResponse.type === "build") {
+    // SAVE & CHARGE (only on successful build)
+    if (parsedResponse?.type === "build") {
       const { error: rpcError } = await supabase.rpc("save_version_and_charge_credit", {
         p_project_id: projectId,
         p_owner_id: authData.user.id,
         p_snapshot: parsedResponse.snapshot,
-        p_note: `Buildlio Engine Materialization v5.6 (${buildType})`,
-        p_model: "claude-3-5-sonnet",
+        p_note: `Buildlio Engine Materialization v5.6.1 (${artifactBuildType})`,
+        p_model: DEFAULT_MODEL,
       });
       if (rpcError) console.error("RPC Charge Error:", rpcError);
     }
 
-    return NextResponse.json({ success: true, data: parsedResponse });
+    return NextResponse.json({ success: true, data: parsedResponse as BuildlioResponse });
   } catch (err: any) {
     console.error("API Error:", err);
-    return NextResponse.json({ success: false, error: err.message }, { status: 500 });
+    const msg = safeString(err?.message) || "Unknown server error";
+    return NextResponse.json({ success: false, error: msg }, { status: 500 });
   }
 }

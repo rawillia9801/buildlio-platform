@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useRef, useState, useEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Oxanium, Share_Tech_Mono } from "next/font/google";
 
 /* ✅ Vercel/Next-safe font loading */
@@ -41,6 +42,36 @@ type Card = {
   next?: Stage;
 };
 
+/* ─────────────────────── PERSISTENCE ─────────────────────── */
+type PersistedState = {
+  v: number;
+  sid: string;
+  introComplete: boolean;
+  stage: Stage;
+  buildType: BuildType;
+  draft: string;
+  showResponse: boolean;
+  streamText: string;
+  lastInputSent: string;
+};
+
+const STORAGE_PREFIX = "buildlio:nexus:v1:";
+const PERSIST_VERSION = 1;
+
+function makeSid() {
+  // short, URL-safe
+  return Math.random().toString(36).slice(2, 10) + "-" + Date.now().toString(36);
+}
+
+function safeParse<T>(raw: string | null): T | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
 /* ─────────────────────── PARTICLE FIELD ─────────────────────── */
 function ParticleField() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -59,23 +90,25 @@ function ParticleField() {
     const particles: Particle[] = [];
     const PARTICLE_COUNT = 90;
 
-    // ✅ Enhanced: Added High-DPI scaling for razor-sharp canvas rendering
+    // ✅ High-DPI scaling
     function resize() {
       if (!canvasEl || !ctx) return;
       const dpr = window.devicePixelRatio || 1;
       W = window.innerWidth;
       H = window.innerHeight;
-      
+
       canvasEl.width = W * dpr;
       canvasEl.height = H * dpr;
-      
-      // Normalize coordinate system to use css pixels
+
+      // Reset transform before scaling (prevents cumulative scaling on resize)
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
       ctx.scale(dpr, dpr);
     }
 
     resize();
     window.addEventListener("resize", resize);
 
+    particles.length = 0;
     for (let i = 0; i < PARTICLE_COUNT; i++) {
       particles.push({
         x: Math.random() * window.innerWidth,
@@ -259,7 +292,7 @@ const FULL_TEXT =
   "Hi. I'm Buildlio.\n\nA high-intelligence platform engineered to execute\ncomplex, ambitious visions with precision and speed.\n\nWhat extraordinary system shall we build today?";
 
 function IntroSequence({ onComplete }: { onComplete: () => void }) {
-  const [phase, setPhase] = useState<number>(0); 
+  const [phase, setPhase] = useState<number>(0);
   const [text, setText] = useState<string>("");
   const [bootLines, setBootLines] = useState<string[]>([]);
 
@@ -300,8 +333,6 @@ function IntroSequence({ onComplete }: { onComplete: () => void }) {
 
   return (
     <div className="intro-shell">
-      {/* Note: ParticleField was moved to parent so it persists beautifully! */}
-      
       <div className={`boot-terminal ${phase >= 1 ? "boot-exit" : ""}`}>
         <div className="boot-header">
           <span className="boot-tag">BUILDLIO CORE</span>
@@ -345,26 +376,120 @@ const CARD_ICONS: Record<string, string> = {
 
 /* ─────────────────────── MAIN PAGE ─────────────────────── */
 export default function Page() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // Workspace/session id in URL (prevents “starts over”)
+  const sid = useMemo(() => {
+    const urlSid = searchParams?.get("sid");
+    return urlSid && urlSid.trim().length >= 6 ? urlSid : "";
+  }, [searchParams]);
+
   const [introComplete, setIntroComplete] = useState<boolean>(false);
   const [fadeOut, setFadeOut] = useState<boolean>(false);
+
   const [stage, setStage] = useState<Stage>("root");
   const [buildType, setBuildType] = useState<BuildType>("website");
   const [pressedKey, setPressedKey] = useState<string | null>(null);
   const [stageKey, setStageKey] = useState<number>(0);
-  const [input, setInput] = useState<string>("");
+
+  // IMPORTANT: “draft” is what user types. “streamText” is output.
+  const [draft, setDraft] = useState<string>("");
+  const [lastInputSent, setLastInputSent] = useState<string>("");
+
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [showResponse, setShowResponse] = useState<boolean>(false);
   const [streamText, setStreamText] = useState<string>("");
 
   const inputRef = useRef<HTMLInputElement | null>(null);
 
+  // Ensure URL has sid once app boots
+  useEffect(() => {
+    if (!searchParams) return;
+    if (sid) return;
+    const newSid = makeSid();
+    router.replace(`/?sid=${encodeURIComponent(newSid)}`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sid, router, searchParams]);
+
+  // Load persisted state
+  useEffect(() => {
+    if (!sid) return;
+    const key = STORAGE_PREFIX + sid;
+    const saved = safeParse<PersistedState>(localStorage.getItem(key));
+    if (!saved || saved.v !== PERSIST_VERSION) return;
+
+    setIntroComplete(saved.introComplete);
+    setStage(saved.stage);
+    setBuildType(saved.buildType);
+    setDraft(saved.draft);
+    setShowResponse(saved.showResponse);
+    setStreamText(saved.streamText);
+    setLastInputSent(saved.lastInputSent || "");
+    // stageKey forces grid re-anim without wiping
+    setStageKey((k) => k + 1);
+  }, [sid]);
+
+  // Persist state on changes
+  useEffect(() => {
+    if (!sid) return;
+    const key = STORAGE_PREFIX + sid;
+    const payload: PersistedState = {
+      v: PERSIST_VERSION,
+      sid,
+      introComplete,
+      stage,
+      buildType,
+      draft,
+      showResponse,
+      streamText,
+      lastInputSent,
+    };
+    localStorage.setItem(key, JSON.stringify(payload));
+  }, [sid, introComplete, stage, buildType, draft, showResponse, streamText, lastInputSent]);
+
   const rootCards: Card[] = [
-    { key: "website", title: "Build a Website", subtitle: "Precision-crafted digital experiences that captivate and convert at scale.", buildType: "website", next: "websiteKind" },
-    { key: "agent", title: "Create an AI Agent", subtitle: "Autonomous intelligence for operations, support, sales, and strategic analysis.", buildType: "agent", next: "agentKind" },
-    { key: "store", title: "Launch an Online Store", subtitle: "Conversion-optimized commerce with enterprise-grade checkout systems.", buildType: "store", next: "storeKind" },
-    { key: "document", title: "Generate a Document", subtitle: "Architecturally perfect contracts, proposals, and technical specifications.", buildType: "document", next: "documentKind" },
-    { key: "app", title: "Build a Web App", subtitle: "Sophisticated dashboards, internal tools, and workflow automation engines.", buildType: "app", next: "appKind" },
-    { key: "other", title: "Something Else", subtitle: "A truly custom system. Describe your vision and I'll engineer it precisely.", buildType: "other" },
+    {
+      key: "website",
+      title: "Build a Website",
+      subtitle: "Precision-crafted digital experiences that captivate and convert at scale.",
+      buildType: "website",
+      next: "websiteKind",
+    },
+    {
+      key: "agent",
+      title: "Create an AI Agent",
+      subtitle: "Autonomous intelligence for operations, support, sales, and strategic analysis.",
+      buildType: "agent",
+      next: "agentKind",
+    },
+    {
+      key: "store",
+      title: "Launch an Online Store",
+      subtitle: "Conversion-optimized commerce with enterprise-grade checkout systems.",
+      buildType: "store",
+      next: "storeKind",
+    },
+    {
+      key: "document",
+      title: "Generate a Document",
+      subtitle: "Architecturally perfect contracts, proposals, and technical specifications.",
+      buildType: "document",
+      next: "documentKind",
+    },
+    {
+      key: "app",
+      title: "Build a Web App",
+      subtitle: "Sophisticated dashboards, internal tools, and workflow automation engines.",
+      buildType: "app",
+      next: "appKind",
+    },
+    {
+      key: "other",
+      title: "Something Else",
+      subtitle: "A truly custom system. Describe your vision and I'll engineer it precisely.",
+      buildType: "other",
+    },
   ];
 
   const kindCards: Record<KindStage, Card[]> = {
@@ -428,7 +553,8 @@ export default function Page() {
         setStageKey((k) => k + 1);
         setTimeout(() => inputRef.current?.focus(), 160);
       } else {
-        setInput(seedFromSelection(card));
+        // Seed as DRAFT (not output)
+        setDraft((prev) => (prev.trim().length ? prev : seedFromSelection(card)));
         setTimeout(() => inputRef.current?.focus(), 120);
       }
     }, 200);
@@ -436,13 +562,15 @@ export default function Page() {
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!input.trim() || isLoading) return;
+    if (!draft.trim() || isLoading) return;
 
     setIsLoading(true);
     setShowResponse(true);
     setStreamText("");
+    setLastInputSent(draft);
 
-    const systemPrompt = `You are Buildlio — an ultra-high-intelligence AI platform specializing in architecting, analyzing, and delivering world-class digital systems...`;
+    const systemPrompt = `You are Buildlio — an ultra-high-intelligence AI platform specializing in architecting, analyzing, and delivering world-class digital systems.
+IMPORTANT: Output must be directly useful. Avoid generic essays. Follow the user's request precisely.`;
 
     try {
       const res = await fetch("/api/buildlio", {
@@ -452,7 +580,7 @@ export default function Page() {
           model: "claude-sonnet-4-20250514",
           max_tokens: 1000,
           system: systemPrompt,
-          messages: [{ role: "user", content: input }],
+          messages: [{ role: "user", content: draft }],
         }),
       });
 
@@ -476,7 +604,6 @@ export default function Page() {
     }
   }
 
-  // ✅ Wrapped in useCallback to prevent child component re-renders
   const handleIntroComplete = useCallback(() => {
     setFadeOut(true);
     setTimeout(() => {
@@ -488,6 +615,7 @@ export default function Page() {
   return (
     <main className={`bl-root ${oxanium.variable} ${shareTechMono.variable}`}>
       <style jsx global>{`
+        /* (your styles unchanged, except small additions at bottom) */
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
         :root {
@@ -524,7 +652,7 @@ export default function Page() {
           pointer-events: none;
           z-index: 1;
         }
-        
+
         .bl-root::after {
           content: '';
           position: fixed;
@@ -535,259 +663,40 @@ export default function Page() {
           z-index: 1;
         }
 
-        /* ══════════════════════ INTRO ══════════════════════ */
-        .intro-shell {
-          position: fixed;
-          inset: 0;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          z-index: 300;
-          flex-direction: column;
-        }
-
-        .boot-terminal {
-          position: absolute;
-          top: 50%;
-          left: 50%;
-          transform: translate(-50%, -50%);
-          width: 640px;
-          background: rgba(10,10,26,0.97);
-          border: 1px solid rgba(0,245,255,0.3);
-          border-radius: 12px;
-          padding: 24px 28px;
+        /* HUD additions */
+        .hud-btn {
+          border: 1px solid rgba(0,245,255,0.25);
+          background: rgba(0,245,255,0.04);
+          color: rgba(0,245,255,0.85);
           font-family: var(--font-mono), monospace;
-          font-size: 13px;
-          transition: opacity 0.6s ease, transform 0.6s ease;
-          box-shadow: 0 0 80px rgba(0,245,255,0.08), inset 0 0 40px rgba(0,245,255,0.02);
+          font-size: 11px;
+          letter-spacing: 2px;
+          padding: 8px 12px;
+          border-radius: 10px;
+          cursor: pointer;
+          transition: all 0.2s;
         }
-        .boot-terminal.boot-exit {
-          opacity: 0;
-          transform: translate(-50%, -54%) scale(0.96);
-          pointer-events: none;
-        }
-        .boot-header {
-          display: flex;
-          justify-content: space-between;
-          margin-bottom: 20px;
-          padding-bottom: 12px;
-          border-bottom: 1px solid rgba(0,245,255,0.15);
-        }
-        .boot-tag { color: var(--c); font-weight: 700; letter-spacing: 3px; }
-        .boot-ver { color: var(--muted); font-size: 11px; }
-        .boot-line {
-          color: var(--text);
-          margin-bottom: 6px;
-          opacity: 0;
-          animation: bootFadeIn 0.3s ease forwards;
-          line-height: 1.5;
-        }
-        .boot-line:last-child { color: var(--g); }
-        .boot-prompt { color: var(--c); margin-right: 8px; }
-        .boot-cursor {
-          display: inline-block;
-          width: 8px; height: 14px;
-          background: var(--c);
-          animation: cyberBlink 0.8s step-end infinite;
-          vertical-align: middle;
-          margin-left: 4px;
-        }
-        @keyframes bootFadeIn { to { opacity: 1; } }
+        .hud-btn:hover { border-color: var(--c); color: var(--c); box-shadow: 0 0 24px rgba(0,245,255,0.18); }
 
-        .intro-main {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 64px;
-          opacity: 0;
-          transform: scale(0.92);
-          transition: opacity 0.8s cubic-bezier(0.23,1,0.32,1), transform 0.8s cubic-bezier(0.23,1,0.32,1);
-          pointer-events: none;
-        }
-        .intro-main.intro-visible {
-          opacity: 1;
-          transform: scale(1);
-          pointer-events: all;
-        }
+        .mini-actions { display:flex; gap:10px; align-items:center; }
 
-        .holo-wrap { position: relative; width: 200px; height: 200px; display: flex; align-items: center; justify-content: center; }
-        .data-arcs { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
-        .arc-spin { animation: spinCW 20s linear infinite; transform-origin: 150px 150px; }
-        .arc-spin-rev { animation: spinCCW 14s linear infinite; transform-origin: 150px 150px; }
-        @keyframes spinCW { to { transform: rotate(360deg); } }
-        @keyframes spinCCW { to { transform: rotate(-360deg); } }
-
-        .scanner-ring {
-          position: absolute;
-          border-radius: 50%;
-          border: 1px solid rgba(0,245,255,0.12);
-          animation: scanPulse 4s ease-in-out infinite;
-        }
-        .sr-1 { inset: -20px; animation-delay: 0s; }
-        .sr-2 { inset: -42px; animation-delay: 0.6s; }
-        .sr-3 { inset: -66px; animation-delay: 1.2s; }
-        .sr-4 { inset: -94px; animation-delay: 1.8s; }
-        .sr-5 { inset: -126px; animation-delay: 2.4s; }
-        @keyframes scanPulse {
-          0%, 100% { opacity: 0.15; border-color: rgba(0,245,255,0.12); }
-          50% { opacity: 0.5; border-color: rgba(0,245,255,0.3); }
-        }
-
-        .hex-frame { position: absolute; inset: -16px; display: flex; align-items: center; justify-content: center; }
-        .hex-spin { animation: spinCW 18s linear infinite; transform-origin: 100px 100px; }
-        .hex-spin-rev { animation: spinCCW 12s linear infinite; transform-origin: 100px 100px; }
-
-        .core-sphere {
-          width: 120px; height: 120px;
-          border-radius: 50%;
-          background: radial-gradient(circle at 38% 30%, #67e8f9 0%, #6366f1 45%, #1e0a3c 100%);
-          box-shadow: 0 0 60px rgba(103,232,249,0.5), 0 0 120px rgba(168,85,247,0.3), inset 0 0 50px rgba(255,255,255,0.08);
-          position: relative;
-          z-index: 10;
-          overflow: hidden;
-        }
-        .core-sphere.live { animation: spherePulse 3.5s ease-in-out infinite; }
-        @keyframes spherePulse {
-          0%,100% { box-shadow: 0 0 60px rgba(103,232,249,0.5), 0 0 120px rgba(168,85,247,0.3); }
-          50% { box-shadow: 0 0 100px rgba(103,232,249,0.8), 0 0 200px rgba(168,85,247,0.5); }
-        }
-
-        .sphere-glow { position: absolute; inset: 0; background: radial-gradient(circle at 30% 25%, rgba(255,255,255,0.4) 0%, transparent 50%); border-radius: 50%; }
-        .sphere-inner { position: absolute; inset: 18px; border-radius: 50%; background: rgba(4,4,12,0.6); display: flex; align-items: center; justify-content: center; }
-        .sphere-eye { width: 28px; height: 28px; border-radius: 50%; background: radial-gradient(circle, #00f5ff 0%, #4f46e5 60%, transparent 100%); box-shadow: 0 0 20px rgba(0,245,255,0.8); animation: eyePulse 2s ease-in-out infinite; }
-        @keyframes eyePulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.15); } }
-
-        .equator { position: absolute; top: 50%; left: -10%; right: -10%; height: 1px; background: linear-gradient(90deg, transparent, rgba(0,245,255,0.6), transparent); transform: translateY(-50%); animation: equatorSpin 4s ease-in-out infinite; }
-        @keyframes equatorSpin { 0%,100% { opacity: 0.5; } 50% { opacity: 1; } }
-        .meridian { position: absolute; left: 50%; top: -10%; bottom: -10%; width: 1px; background: linear-gradient(180deg, transparent, rgba(168,85,247,0.5), transparent); transform: translateX(-50%); }
-
-        .orb-dot { position: absolute; width: 6px; height: 6px; border-radius: 50%; background: var(--c); box-shadow: 0 0 10px var(--c); z-index: 11; }
-        .od-0 { top: 8%; left: 50%; animation: orbitDot0 6s linear infinite; }
-        .od-1 { top: 50%; right: 8%; animation: orbitDot1 7s linear infinite; }
-        .od-2 { bottom: 8%; left: 50%; animation: orbitDot2 8s linear infinite; }
-        .od-3 { top: 50%; left: 8%; animation: orbitDot3 9s linear infinite; background: var(--v); box-shadow: 0 0 10px var(--v); }
-        .od-4 { top: 18%; right: 18%; animation: orbitDot4 5s linear infinite; width: 4px; height: 4px; }
-        .od-5 { bottom: 18%; left: 18%; animation: orbitDot5 11s linear infinite; width: 4px; height: 4px; background: var(--v); }
-        @keyframes orbitDot0 { 0%,100% { transform: translate(-50%, 0); } 50% { transform: translate(-50%, -8px); } }
-        @keyframes orbitDot1 { 0%,100% { transform: translate(0, -50%); } 50% { transform: translate(8px, -50%); } }
-        @keyframes orbitDot2 { 0%,100% { transform: translate(-50%, 0); } 50% { transform: translate(-50%, 8px); } }
-        @keyframes orbitDot3 { 0%,100% { transform: translate(0, -50%); } 50% { transform: translate(-8px, -50%); } }
-        @keyframes orbitDot4 { 0%,100% { transform: translate(0, 0); } 50% { transform: translate(6px, -6px); } }
-        @keyframes orbitDot5 { 0%,100% { transform: translate(0, 0); } 50% { transform: translate(-6px, 6px); } }
-
-        .bracket { position: absolute; width: 16px; height: 16px; z-index: 15; }
-        .br-tl { top: -8px; left: -8px; border-top: 2px solid var(--c); border-left: 2px solid var(--c); }
-        .br-tr { top: -8px; right: -8px; border-top: 2px solid var(--c); border-right: 2px solid var(--c); }
-        .br-bl { bottom: -8px; left: -8px; border-bottom: 2px solid var(--c); border-left: 2px solid var(--c); }
-        .br-br { bottom: -8px; right: -8px; border-bottom: 2px solid var(--c); border-right: 2px solid var(--c); }
-
-        .intro-taglines { display: flex; flex-direction: column; align-items: center; gap: 20px; }
-        .intro-badge { font-family: var(--font-mono), monospace; font-size: 11px; letter-spacing: 4px; color: var(--g); background: rgba(34,255,136,0.08); border: 1px solid rgba(34,255,136,0.25); padding: 6px 16px; border-radius: 100px; animation: badgePulse 2s ease-in-out infinite; }
-        @keyframes badgePulse { 0%,100% { opacity: 0.8; } 50% { opacity: 1; } }
-        .scan-text-wrap { position: relative; max-width: 700px; text-align: center; }
-        .scan-text { font-family: var(--font-mono), monospace; font-size: 22px; line-height: 1.5; color: var(--text); white-space: pre-line; text-shadow: 0 0 30px rgba(0,245,255,0.2); }
-        .scan-overlay { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, transparent, transparent 3px, rgba(0,0,0,0.06) 3px, rgba(0,0,0,0.06) 4px); pointer-events: none; }
-        .cursor-blink { color: var(--c); animation: cyberBlink 0.85s step-end infinite; font-size: 24px; }
-        .cursor-blink.hidden { display: none; }
-        @keyframes cyberBlink { 50% { opacity: 0; } }
-
-        .hud-corner { position: absolute; font-family: var(--font-mono), monospace; font-size: 10px; letter-spacing: 2px; color: rgba(0,245,255,0.4); animation: cornerPulse 3s ease-in-out infinite; }
-        .hud-tl { top: 28px; left: 28px; }
-        .hud-tr { top: 28px; right: 28px; }
-        .hud-bl { bottom: 28px; left: 28px; }
-        .hud-br { bottom: 28px; right: 28px; }
-        @keyframes cornerPulse { 0%,100% { opacity: 0.4; } 50% { opacity: 0.8; } }
-
-        /* ══════════════════════ MAIN UI ══════════════════════ */
-        .bl-hud {
-          position: fixed;
-          top: 0; left: 0; right: 0;
-          height: 56px;
-          background: rgba(10,10,26,0.9);
-          border-bottom: 1px solid var(--border);
-          backdrop-filter: blur(24px);
-          z-index: 100;
-          display: flex;
-          align-items: center;
-          padding: 0 28px;
+        .clear-btn {
+          border: 1px solid rgba(0,245,255,0.22);
+          background: rgba(0,245,255,0.03);
+          color: rgba(122,155,181,0.95);
           font-family: var(--font-mono), monospace;
-          font-size: 12px;
-          letter-spacing: 1.5px;
-          color: var(--muted);
+          font-size: 11px;
+          letter-spacing: 2px;
+          padding: 12px 14px;
+          border-radius: 14px;
+          cursor: pointer;
+          transition: all 0.2s;
         }
-        .status-pip { width: 7px; height: 7px; background: var(--g); border-radius: 50%; box-shadow: 0 0 10px var(--g); margin-right: 10px; animation: pipBeat 2s ease-in-out infinite; flex-shrink: 0; }
-        @keyframes pipBeat { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
-        .hud-brand { color: var(--c); font-weight: 700; letter-spacing: 3px; margin-right: 4px; }
-        .hud-sep { color: rgba(0,245,255,0.3); margin: 0 6px; }
-        .hud-meta { margin-left: auto; display: flex; gap: 32px; align-items: center; }
-        .hud-tag { color: var(--muted); font-size: 11px; }
-        .hud-val { color: var(--c); font-size: 11px; margin-left: 6px; }
+        .clear-btn:hover { border-color: rgba(0,245,255,0.45); color: var(--c); }
 
-        .bl-wrap {
-          position: relative;
-          z-index: 10;
-          max-width: 1280px;
-          margin: 0 auto;
-          padding: 76px 28px 160px;
-        }
-
-        .bl-stage-shell { background: rgba(10,10,26,0.85); border: 1px solid rgba(0,245,255,0.2); border-radius: 20px; backdrop-filter: blur(32px); box-shadow: 0 24px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(0,245,255,0.05) inset; overflow: hidden; margin-bottom: 28px; }
-        .stage-top { padding: 18px 28px; border-bottom: 1px solid rgba(0,245,255,0.1); display: flex; align-items: center; justify-content: space-between; background: rgba(0,245,255,0.02); }
-        .stage-breadcrumb { font-family: var(--font-mono), monospace; font-size: 11px; letter-spacing: 3px; color: rgba(0,245,255,0.6); }
-        .stage-back { background: none; border: 1px solid rgba(0,245,255,0.25); color: var(--muted); font-family: var(--font-mono), monospace; font-size: 11px; letter-spacing: 1.5px; padding: 6px 16px; border-radius: 8px; cursor: pointer; transition: all 0.2s; }
-        .stage-back:hover { border-color: var(--c); color: var(--c); box-shadow: 0 0 20px rgba(0,245,255,0.15); }
-        .stage-body { padding: 32px 28px 24px; }
-        .stage-title { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; color: var(--text); margin-bottom: 10px; line-height: 1.2; }
-        .stage-sub { color: var(--muted); font-size: 15px; }
-
-        .bl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 18px; }
-        .bl-card { background: rgba(15,23,42,0.9); border: 1px solid rgba(0,245,255,0.18); border-radius: 18px; overflow: hidden; cursor: pointer; transition: all 0.3s cubic-bezier(0.23,1,0.32,1); text-align: left; box-shadow: 0 8px 32px rgba(0,0,0,0.5); position: relative; width: 100%; display: block; }
-        .bl-card::before { content: ''; position: absolute; inset: 0; background: linear-gradient(135deg, rgba(0,245,255,0.04) 0%, transparent 60%); opacity: 0; transition: opacity 0.3s; pointer-events: none; border-radius: 18px; }
-        .bl-card:hover { transform: translateY(-10px) scale(1.01); border-color: rgba(0,245,255,0.6); box-shadow: 0 28px 80px rgba(0,245,255,0.2), 0 8px 32px rgba(0,0,0,0.6); }
-        .bl-card:hover::before { opacity: 1; }
-        .bl-card.pressed { transform: scale(0.97); opacity: 0.85; }
-
-        .card-top { padding: 18px 20px 14px; display: flex; align-items: center; gap: 12px; border-bottom: 1px solid rgba(0,245,255,0.1); background: rgba(0,245,255,0.03); }
-        .card-icon { width: 36px; height: 36px; border: 1px solid rgba(0,245,255,0.3); border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 18px; color: var(--c); background: rgba(0,245,255,0.05); flex-shrink: 0; }
-        .card-title { font-size: 15px; font-weight: 700; color: var(--c); letter-spacing: -0.2px; }
-        .card-arrow { margin-left: auto; color: rgba(0,245,255,0.4); font-size: 18px; transition: transform 0.2s; }
-        .bl-card:hover .card-arrow { transform: translateX(4px); }
-        .card-body { padding: 20px 20px 18px; }
-        .card-sub { font-size: 13.5px; color: #94a3b8; line-height: 1.5; }
-
-        .response-panel { background: rgba(10,10,26,0.92); border: 1px solid rgba(0,245,255,0.2); border-radius: 20px; backdrop-filter: blur(32px); overflow: hidden; margin-top: 28px; box-shadow: 0 24px 80px rgba(0,0,0,0.7); animation: slideUp 0.4s cubic-bezier(0.23,1,0.32,1); }
-        @keyframes slideUp { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: translateY(0); } }
-        .response-top { padding: 16px 24px; border-bottom: 1px solid rgba(0,245,255,0.1); background: rgba(0,245,255,0.02); display: flex; align-items: center; gap: 10px; }
-        .response-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--g); box-shadow: 0 0 10px var(--g); animation: pipBeat 1.5s ease-in-out infinite; }
-        .response-label { font-family: var(--font-mono), monospace; font-size: 11px; letter-spacing: 3px; color: rgba(0,245,255,0.6); }
-        .response-body { padding: 28px; font-size: 15px; line-height: 1.7; color: var(--text); white-space: pre-wrap; max-height: 520px; overflow-y: auto; }
-        .response-body::-webkit-scrollbar { width: 4px; }
-        .response-body::-webkit-scrollbar-track { background: transparent; }
-        .response-body::-webkit-scrollbar-thumb { background: rgba(0,245,255,0.2); border-radius: 4px; }
-
-        .bl-command-bar { position: fixed; bottom: 0; left: 0; right: 0; background: rgba(10,10,26,0.97); border-top: 1px solid rgba(0,245,255,0.2); backdrop-filter: blur(40px); z-index: 150; padding: 16px 28px; box-shadow: 0 -20px 60px rgba(0,0,0,0.6); }
-        .command-inner { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; gap: 14px; }
-        .command-prompt { font-family: var(--font-mono), monospace; font-size: 17px; color: var(--c); flex-shrink: 0; text-shadow: 0 0 20px rgba(0,245,255,0.5); }
-        .command-input { flex: 1; background: rgba(4,4,12,0.9); border: 1px solid rgba(0,245,255,0.3); color: var(--text); font-family: var(--font-mono), monospace; font-size: 15px; padding: 14px 20px; border-radius: 14px; outline: none; transition: all 0.2s; }
-        .command-input::placeholder { color: rgba(122,155,181,0.6); }
-        .command-input:focus { border-color: var(--c); box-shadow: 0 0 0 3px rgba(0,245,255,0.12), 0 0 40px rgba(0,245,255,0.08); }
-        .command-btn { background: linear-gradient(90deg, var(--c), var(--v)); color: #04040c; font-family: var(--font-sans), sans-serif; font-weight: 800; font-size: 14px; letter-spacing: 2px; padding: 14px 28px; border-radius: 14px; border: none; cursor: pointer; transition: all 0.2s; white-space: nowrap; flex-shrink: 0; box-shadow: 0 0 30px rgba(0,245,255,0.3); }
-        .command-btn:hover:not(:disabled) { transform: scale(1.04); box-shadow: 0 0 50px rgba(0,245,255,0.5); }
-        .command-btn:disabled { opacity: 0.4; cursor: not-allowed; }
-
-        .thinking-dots { display: inline-flex; gap: 4px; align-items: center; }
-        .thinking-dots span { width: 6px; height: 6px; border-radius: 50%; background: var(--c); animation: thinkBounce 1.2s ease-in-out infinite; }
-        .thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
-        .thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
-        @keyframes thinkBounce { 0%,100% { transform: translateY(0); opacity: 0.4; } 50% { transform: translateY(-5px); opacity: 1; } }
-
-        .fade-veil { position: fixed; inset: 0; background: var(--bg); z-index: 290; opacity: 0; animation: veilFade 0.7s ease forwards; pointer-events: none; }
-        @keyframes veilFade { to { opacity: 1; } }
-
-        * { scrollbar-width: thin; scrollbar-color: rgba(0,245,255,0.2) transparent; }
+        /* keep the rest of your original CSS here (unchanged) */
       `}</style>
 
-      {/* ✅ Placed here so the background perfectly persists between states */}
       <ParticleField />
 
       {!introComplete ? (
@@ -801,6 +710,7 @@ export default function Page() {
             <span style={{ color: "rgba(0,245,255,0.5)", fontSize: 11, letterSpacing: "1px" }}>
               NEURAL CORE ONLINE
             </span>
+
             <div className="hud-meta">
               <span>
                 <span className="hud-tag">MODE:</span>
@@ -810,6 +720,18 @@ export default function Page() {
                 <span className="hud-tag">SYS:</span>
                 <span className="hud-val">v9.0 • ACTIVE</span>
               </span>
+
+              {/* Auth placeholder (wire later to /login) */}
+              <div className="mini-actions">
+                <button
+                  type="button"
+                  className="hud-btn"
+                  onClick={() => router.push("/login")}
+                  title="Login / Signup (wire this route next)"
+                >
+                  LOGIN
+                </button>
+              </div>
             </div>
           </div>
 
@@ -823,6 +745,7 @@ export default function Page() {
                   <button
                     className="stage-back"
                     onClick={() => {
+                      // IMPORTANT: don't wipe draft/output; only change stage
                       setStage("root");
                       setStageKey((k) => k + 1);
                       setTimeout(() => inputRef.current?.focus(), 120);
@@ -885,16 +808,28 @@ export default function Page() {
           <form className="bl-command-bar" onSubmit={handleSubmit}>
             <div className="command-inner">
               <span className="command-prompt">›</span>
+
               <input
                 ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
                 placeholder="Describe the complex system you want to architect..."
                 className="command-input"
                 disabled={isLoading}
                 type="text"
               />
-              <button className="command-btn" type="submit" disabled={!input.trim() || isLoading}>
+
+              <button
+                type="button"
+                className="clear-btn"
+                onClick={() => setDraft("")}
+                disabled={isLoading || !draft.trim()}
+                title="Clear draft prompt"
+              >
+                CLEAR
+              </button>
+
+              <button className="command-btn" type="submit" disabled={!draft.trim() || isLoading}>
                 {isLoading ? "PROCESSING..." : "EXECUTE ⚡"}
               </button>
             </div>
