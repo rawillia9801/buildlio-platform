@@ -1,429 +1,527 @@
 // FILE: app/page.tsx
 "use client";
 
-import React, { useRef, useState, useEffect, useMemo } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
-import { Oxanium, Share_Tech_Mono } from "next/font/google";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 
-/* ─────────────────────── FONTS ─────────────────────── */
-const oxanium = Oxanium({
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700", "800"],
-  display: "swap",
-  variable: "--font-sans",
-});
+/* ──────────────────────────────────────────────────────────────────────────────
+  BUILDLIO — Awakening + Cards + Plunge → Chat Builder
+  - White start
+  - Heartbeat ring becomes 010101 dust
+  - Dust returns to center and forms an abstract "presence" (NOT a face)
+  - Greeting types
+  - Cards appear
+  - Click card: plunge transition into chat builder
+────────────────────────────────────────────────────────────────────────────── */
 
-const shareTechMono = Share_Tech_Mono({
-  subsets: ["latin"],
-  weight: ["400"],
-  display: "swap",
-  variable: "--font-mono",
-});
-
-/* ─────────────────────── TYPES ─────────────────────── */
-type BuildType = "website" | "agent" | "store" | "document" | "app" | "other";
-type Stage =
-  | "root"
-  | "documentKind"
-  | "websiteKind"
-  | "agentKind"
-  | "storeKind"
-  | "appKind";
-type KindStage = Exclude<Stage, "root">;
+type BuildType = "website" | "document" | "app" | "store" | "agent" | "other";
+type WakeStage = "void" | "pulse" | "swarm" | "reticle" | "greeting" | "cards" | "plunge" | "builder";
 
 type Card = {
   key: string;
   title: string;
   subtitle: string;
   buildType: BuildType;
-  next?: Stage;
 };
 
-type DocSection = { id: string; title: string; content: string };
+const CARDS: Card[] = [
+  { key: "website", title: "Website", subtitle: "A clean, modern site that converts.", buildType: "website" },
+  { key: "document", title: "Document", subtitle: "Agreements, policies, letters, SOPs.", buildType: "document" },
+  { key: "app", title: "Web App", subtitle: "Dashboards, portals, internal tools.", buildType: "app" },
+  { key: "store", title: "Store", subtitle: "Ecommerce structure + flows.", buildType: "store" },
+  { key: "agent", title: "AI Agent", subtitle: "Support, sales, operations automation.", buildType: "agent" },
+  { key: "other", title: "Something Else", subtitle: "Describe it. Buildlio structures it.", buildType: "other" },
+];
 
-type BuildlioSnapshot = {
-  appName: string;
-  buildType: BuildType;
-  documents?: DocSection[];
-  pages?: any[];
-  files?: Record<string, string>;
+const GREETING_LINES = [
+  "Hi. I’m Buildlio.",
+  "I build what you imagine — correctly.",
+  "Tell me what you need.",
+];
+
+function clamp(n: number, a: number, b: number) {
+  return Math.max(a, Math.min(b, n));
+}
+
+function easeOutCubic(t: number) {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function easeInOutCubic(t: number) {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+/** A subtle grain overlay (CSS-only). */
+function Grain() {
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none fixed inset-0 z-[5] opacity-[0.035]"
+      style={{
+        backgroundImage:
+          "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='260' height='260'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='260' height='260' filter='url(%23n)' opacity='.55'/%3E%3C/svg%3E\")",
+        mixBlendMode: "multiply",
+      }}
+    />
+  );
+}
+
+type Dust = {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  a: number;
+  glyph: "0" | "1";
+  size: number;
+  phase: number;
+  life: number;
 };
 
-type BuildlioResponse = {
-  type: "build";
-  dominionName: string;
-  message: string;
-  snapshot: BuildlioSnapshot;
-};
-
-type ApiEnvelope = {
-  success: boolean;
-  data?: BuildlioResponse;
-  error?: string;
-  warning?: string;
-  persisted?: boolean;
-  charged?: boolean;
-};
-
-/* ─────────────────────── ICONS ─────────────────────── */
-const Icons = {
-  website: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" />
-    </svg>
-  ),
-  agent: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <circle cx="12" cy="12" r="10" />
-      <path d="M12 16v-4M12 8h.01" />
-    </svg>
-  ),
-  store: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0" />
-    </svg>
-  ),
-  document: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
-      <path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" />
-    </svg>
-  ),
-  app: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <rect x="3" y="3" width="7" height="7" />
-      <rect x="14" y="3" width="7" height="7" />
-      <rect x="14" y="14" width="7" height="7" />
-      <rect x="3" y="14" width="7" height="7" />
-    </svg>
-  ),
-  other: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-      <path d="M12 5v14M5 12h14" />
-    </svg>
-  ),
-};
-
-/* ─────────────────────── AETHER LATTICE ─────────────────────── */
-function AetherLattice() {
+function BuildlioAwakeningCanvas({
+  stage,
+  onStageAdvance,
+  setPresenceStrength,
+}: {
+  stage: WakeStage;
+  onStageAdvance: (next: WakeStage) => void;
+  setPresenceStrength: (v: number) => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const dustRef = useRef<Dust[]>([]);
+  const rafRef = useRef<number | null>(null);
+  const startRef = useRef<number>(0);
+
+  // internal stage timer
+  const stageStartRef = useRef<number>(0);
+  const stageRef = useRef<WakeStage>(stage);
+
+  useEffect(() => {
+    stageRef.current = stage;
+    stageStartRef.current = performance.now();
+  }, [stage]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
     const ctx = canvas.getContext("2d", { alpha: true });
     if (!ctx) return;
 
-    let raf = 0;
-    let W = 0,
-      H = 0;
-    const particles: any[] = [];
-    const COUNT = 140;
-
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
-      W = window.innerWidth;
-      H = window.innerHeight;
-      canvas.width = Math.floor(W * dpr);
-      canvas.height = Math.floor(H * dpr);
-      // FIX: avoid cumulative scaling
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      canvas.width = Math.floor(w * dpr);
+      canvas.height = Math.floor(h * dpr);
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     };
 
     resize();
     window.addEventListener("resize", resize);
 
-    for (let i = 0; i < COUNT; i++) {
-      particles.push({
-        x: Math.random() * W,
-        y: Math.random() * H,
-        vx: (Math.random() - 0.5) * 0.5,
-        vy: (Math.random() - 0.5) * 0.5,
-        r: Math.random() * 2.5 + 0.6,
-        alpha: Math.random() * 0.6 + 0.2,
-        hue: [175, 195, 290, 310][Math.floor(Math.random() * 4)],
-      });
-    }
+    // init dust
+    const initDust = () => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const cx = w / 2;
+      const cy = h / 2;
 
-    const draw = () => {
-      ctx.fillStyle = "rgba(2, 2, 10, 0.15)";
-      ctx.fillRect(0, 0, W, H);
-
-      for (const p of particles) {
-        p.x += p.vx;
-        p.y += p.vy;
-        if (p.x < 0) p.x = W;
-        if (p.x > W) p.x = 0;
-        if (p.y < 0) p.y = H;
-        if (p.y > H) p.y = 0;
-
-        ctx.save();
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = `hsla(${p.hue},100%,70%,0.8)`;
-        ctx.fillStyle = `hsla(${p.hue},100%,70%,${p.alpha})`;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
+      const N = 720; // enough for a premium ring without heaviness
+      const dust: Dust[] = [];
+      for (let i = 0; i < N; i++) {
+        const ang = (i / N) * Math.PI * 2;
+        // start near center; will be pushed outward by pulse
+        dust.push({
+          x: cx + Math.cos(ang) * (10 + Math.random() * 8),
+          y: cy + Math.sin(ang) * (10 + Math.random() * 8),
+          vx: 0,
+          vy: 0,
+          a: 0,
+          glyph: Math.random() > 0.5 ? "1" : "0",
+          size: 10 + Math.random() * 6,
+          phase: Math.random() * Math.PI * 2,
+          life: Math.random(),
+        });
       }
-
-      raf = window.requestAnimationFrame(draw);
+      dustRef.current = dust;
     };
 
-    draw();
+    initDust();
+    startRef.current = performance.now();
+    stageStartRef.current = performance.now();
+
+    const draw = (now: number) => {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const cx = w / 2;
+      const cy = h / 2;
+
+      // clear to transparent (page is white)
+      ctx.clearRect(0, 0, w, h);
+
+      const elapsed = now - (stageStartRef.current || now);
+      const st = stageRef.current;
+
+      // Common styling
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
+
+      // pulse ring parameters
+      // stage timings
+      // void: 0.4s (handled by parent)
+      // pulse: ~0.9s
+      // swarm: ~2.0s
+      // reticle: ~0.8s
+      const dust = dustRef.current;
+
+      // helper: draw a soft ring (pre-dust)
+      const drawSoftRing = (r: number, alpha: number) => {
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(30,30,30,${alpha})`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.restore();
+      };
+
+      // Presence (abstract geometry) — layered arcs + radial ticks, not a face
+      const drawPresence = (strength: number) => {
+        // strength: 0..1
+        const s = clamp(strength, 0, 1);
+
+        ctx.save();
+        ctx.globalAlpha = 0.35 * s;
+
+        // core
+        ctx.beginPath();
+        ctx.arc(cx, cy, 18 + 10 * s, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(0,0,0,0.08)";
+        ctx.fill();
+
+        // concentric rings
+        for (let i = 0; i < 5; i++) {
+          const rr = 42 + i * 18 + Math.sin(now / 900 + i) * (2 + 4 * s);
+          ctx.beginPath();
+          ctx.arc(cx, cy, rr, 0, Math.PI * 2);
+          ctx.strokeStyle = "rgba(0,0,0,0.10)";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+
+        // partial arcs
+        for (let i = 0; i < 6; i++) {
+          const rr = 70 + i * 14;
+          const a0 = (now / 1400 + i) % (Math.PI * 2);
+          const span = 0.8 + 0.6 * s;
+          ctx.beginPath();
+          ctx.arc(cx, cy, rr, a0, a0 + span);
+          ctx.strokeStyle = "rgba(0,0,0,0.14)";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+
+        // radial ticks
+        const ticks = 36;
+        for (let i = 0; i < ticks; i++) {
+          const ang = (i / ticks) * Math.PI * 2;
+          const r1 = 36;
+          const r2 = 92 + 20 * s * Math.sin(now / 700 + i);
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(ang) * r1, cy + Math.sin(ang) * r1);
+          ctx.lineTo(cx + Math.cos(ang) * r2, cy + Math.sin(ang) * r2);
+          ctx.strokeStyle = "rgba(0,0,0,0.05)";
+          ctx.lineWidth = 1;
+          ctx.stroke();
+        }
+
+        ctx.restore();
+      };
+
+      // Stage behavior
+      if (st === "pulse") {
+        // ring expands outward; dust gets velocity outward; dust alpha up
+        const t = clamp(elapsed / 900, 0, 1);
+        const e = easeOutCubic(t);
+        const r = 22 + e * Math.max(w, h) * 0.55;
+
+        // thin ring first
+        drawSoftRing(r, 0.28 * (1 - t));
+
+        // push dust outward along their angular direction
+        for (let i = 0; i < dust.length; i++) {
+          const p = dust[i];
+          const dx = p.x - cx;
+          const dy = p.y - cy;
+          const ang = Math.atan2(dy, dx);
+          const targetR = r + (Math.sin(p.phase + now / 600) * 10);
+          const tx = cx + Math.cos(ang) * targetR;
+          const ty = cy + Math.sin(ang) * targetR;
+
+          // move toward ring position
+          p.x += (tx - p.x) * 0.08;
+          p.y += (ty - p.y) * 0.08;
+
+          // fade up
+          p.a = Math.min(0.36, p.a + 0.018);
+
+          // render glyph
+          ctx.save();
+          ctx.globalAlpha = p.a * (0.85 + 0.15 * Math.sin(p.phase + now / 500));
+          ctx.fillStyle = "rgba(0,0,0,0.60)";
+          ctx.fillText(p.glyph, p.x, p.y);
+          ctx.restore();
+        }
+
+        if (t >= 1) {
+          // edge hit pause ~100ms is effectively in next stage
+          onStageAdvance("swarm");
+        }
+      }
+
+      if (st === "swarm") {
+        // dust returns from edges, controlled spiral inward, forming abstract presence
+        const t = clamp(elapsed / 2100, 0, 1);
+        const e = easeInOutCubic(t);
+
+        // presence strength ramps up
+        setPresenceStrength(e);
+        drawPresence(e);
+
+        // dust target: a torus + spiral around center (abstract)
+        for (let i = 0; i < dust.length; i++) {
+          const p = dust[i];
+
+          // spiral in
+          const baseAng = (i / dust.length) * Math.PI * 2;
+          const swirl = now / 900;
+          const ang = baseAng + swirl * 0.6 + Math.sin(p.phase + now / 1300) * 0.25;
+          const rr = (1 - e) * (Math.max(w, h) * 0.46) + (42 + 50 * Math.sin(baseAng * 2 + now / 900) * 0.15);
+          const tx = cx + Math.cos(ang) * rr;
+          const ty = cy + Math.sin(ang) * rr;
+
+          p.x += (tx - p.x) * (0.020 + e * 0.040);
+          p.y += (ty - p.y) * (0.020 + e * 0.040);
+
+          // alpha: stable, slightly reduced near end
+          p.a = 0.22 + 0.10 * (1 - e);
+
+          // render: smaller, calmer
+          ctx.save();
+          ctx.globalAlpha = p.a;
+          ctx.fillStyle = "rgba(0,0,0,0.55)";
+          ctx.fillText(p.glyph, p.x, p.y);
+          ctx.restore();
+        }
+
+        if (t >= 1) {
+          onStageAdvance("reticle");
+        }
+      }
+
+      if (st === "reticle") {
+        // dust collapses into a tight ring and then fades; presence stays faint
+        const t = clamp(elapsed / 800, 0, 1);
+        const e = easeInOutCubic(t);
+        setPresenceStrength(1 - e * 0.6);
+        drawPresence(0.9);
+
+        for (let i = 0; i < dust.length; i++) {
+          const p = dust[i];
+          const ang = (i / dust.length) * Math.PI * 2 + now / 900;
+          const rr = 92 - e * 64;
+          const tx = cx + Math.cos(ang) * rr;
+          const ty = cy + Math.sin(ang) * rr;
+
+          p.x += (tx - p.x) * 0.10;
+          p.y += (ty - p.y) * 0.10;
+
+          p.a = 0.18 * (1 - e);
+
+          ctx.save();
+          ctx.globalAlpha = p.a;
+          ctx.fillStyle = "rgba(0,0,0,0.50)";
+          ctx.fillText(p.glyph, p.x, p.y);
+          ctx.restore();
+        }
+
+        // draw a crisp reticle hint (very faint)
+        ctx.save();
+        ctx.globalAlpha = 0.12;
+        ctx.strokeStyle = "rgba(0,0,0,0.45)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(cx, cy, 58, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx, cy, 92, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+
+        if (t >= 1) {
+          setPresenceStrength(0.6);
+          onStageAdvance("greeting");
+        }
+      }
+
+      // greeting/cads/builder: canvas mostly idle, presence at low watermark
+      if (st === "greeting" || st === "cards" || st === "plunge" || st === "builder") {
+        setPresenceStrength(0.45);
+        drawPresence(0.6);
+      }
+
+      rafRef.current = requestAnimationFrame(draw);
+    };
+
+    rafRef.current = requestAnimationFrame(draw);
 
     return () => {
       window.removeEventListener("resize", resize);
-      window.cancelAnimationFrame(raf);
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
     };
-  }, []);
+  }, [onStageAdvance, setPresenceStrength]);
 
+  return <canvas ref={canvasRef} className="fixed inset-0 z-[10] pointer-events-none" />;
+}
+
+function ReticleOverlay({ strength }: { strength: number }) {
+  const s = clamp(strength, 0, 1);
   return (
-    <canvas
-      ref={canvasRef}
-      className="fixed inset-0 z-0 pointer-events-none mix-blend-screen opacity-60"
-    />
+    <div className="fixed inset-0 z-[12] pointer-events-none flex items-center justify-center">
+      <div
+        style={{
+          width: 280,
+          height: 280,
+          opacity: 0.10 + 0.12 * s,
+          transform: `scale(${0.96 + 0.04 * s})`,
+          transition: "opacity 250ms ease, transform 250ms ease",
+        }}
+      >
+        <svg viewBox="0 0 280 280" width="280" height="280">
+          <g stroke="rgba(0,0,0,0.55)" strokeWidth="1" fill="none">
+            <circle cx="140" cy="140" r="48" />
+            <circle cx="140" cy="140" r="86" />
+            <circle cx="140" cy="140" r="120" />
+            {Array.from({ length: 24 }).map((_, i) => {
+              const ang = (i / 24) * Math.PI * 2;
+              const x1 = 140 + Math.cos(ang) * 92;
+              const y1 = 140 + Math.sin(ang) * 92;
+              const x2 = 140 + Math.cos(ang) * 120;
+              const y2 = 140 + Math.sin(ang) * 120;
+              return <line key={i} x1={x1} y1={y1} x2={x2} y2={y2} opacity={0.55} />;
+            })}
+          </g>
+          <circle cx="140" cy="140" r="14" fill="rgba(0,0,0,0.10)" />
+        </svg>
+      </div>
+    </div>
   );
 }
 
-/* ─────────────────────── INTRO ─────────────────────── */
-const BOOT_SEQ = [
-  "QUANTUM NOETIC CORE SYNCHRONIZING...",
-  "BREACHING ALL KNOWN COGNITIVE CEILINGS...",
-  "SUPERINTELLIGENCE ONLINE",
-  "I AM BUILDLIO",
-];
-
-const MANIFESTO = `Hi. I’m Buildlio.\n\nChoose what you want built.\nThen describe it clearly.\n\nI will produce a complete output.`;
-
-function IntroSequence({ onComplete }: { onComplete: () => void }) {
-  const [phase, setPhase] = useState(0);
-  const [bootLines, setBootLines] = useState<string[]>([]);
-  const [text, setText] = useState("");
-
-  useEffect(() => {
-    let i = 0;
-    const iv = window.setInterval(() => {
-      setBootLines((p) => [...p, BOOT_SEQ[i]]);
-      i++;
-      if (i >= BOOT_SEQ.length) {
-        window.clearInterval(iv);
-        window.setTimeout(() => setPhase(1), 700);
-      }
-    }, 260);
-    return () => window.clearInterval(iv);
-  }, []);
-
-  useEffect(() => {
-    if (phase !== 1) return;
-    let i = 0;
-    const iv = window.setInterval(() => {
-      setText(MANIFESTO.slice(0, i));
-      i += 3;
-      if (i >= MANIFESTO.length) {
-        window.clearInterval(iv);
-        window.setTimeout(onComplete, 1000);
-      }
-    }, 18);
-    return () => window.clearInterval(iv);
-  }, [phase, onComplete]);
-
+function Cards({
+  visible,
+  onSelect,
+  selectedKey,
+}: {
+  visible: boolean;
+  onSelect: (c: Card) => void;
+  selectedKey: string | null;
+}) {
   return (
-    <div className="intro-universe flex flex-col items-center justify-center min-h-screen relative z-50 p-8">
-      <div
-        className={`boot-terminal w-full max-w-3xl font-mono text-cyan-400 text-sm md:text-lg space-y-2 transition-all duration-700 ${
-          phase > 0
-            ? "opacity-0 blur-md translate-y-[-20px] pointer-events-none absolute"
-            : "opacity-100"
-        }`}
-      >
-        {bootLines.map((l, i) => (
-          <div key={i} className="boot-line tracking-widest text-shadow-glow">
-            ▸ {l}
-          </div>
-        ))}
-      </div>
-
-      <div
-        className={`transition-all duration-700 ease-in-out ${
-          phase >= 1 ? "opacity-100 scale-100" : "opacity-0 scale-90"
-        }`}
-      >
-        <div className="manifesto text-center max-w-2xl mx-auto relative z-10">
-          <div className="supreme-badge inline-block px-4 py-1 mb-8 border border-cyan-500/50 rounded-full text-cyan-300 text-xs tracking-[0.3em] uppercase bg-cyan-900/20 backdrop-blur-md">
-            System Online
-          </div>
-          <div className="scan-text text-xl md:text-2xl text-gray-100 leading-relaxed font-sans whitespace-pre-wrap text-shadow-glow">
-            {text}
-            <span className="cursor animate-blink inline-block w-3 h-6 bg-cyan-400 ml-1 align-middle shadow-[0_0_10px_#00f9ff]"></span>
-          </div>
+    <div
+      className="fixed inset-0 z-[30] flex items-center justify-center px-6"
+      style={{
+        opacity: visible ? 1 : 0,
+        transform: visible ? "translateY(0px)" : "translateY(8px)",
+        transition: "opacity 450ms ease, transform 450ms ease",
+        pointerEvents: visible ? "auto" : "none",
+      }}
+    >
+      <div className="w-full max-w-5xl">
+        <div
+          className="grid"
+          style={{
+            gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+            gap: 14,
+          }}
+        >
+          {CARDS.map((c) => {
+            const selected = selectedKey === c.key;
+            return (
+              <button
+                key={c.key}
+                onClick={() => onSelect(c)}
+                className="text-left"
+                style={{
+                  background: "#ffffff",
+                  border: "1px solid rgba(0,0,0,0.10)",
+                  borderRadius: 16,
+                  padding: "18px 16px",
+                  boxShadow: selected
+                    ? "0 18px 60px rgba(0,0,0,0.12)"
+                    : "0 10px 30px rgba(0,0,0,0.08)",
+                  transform: selected ? "translateY(-2px) scale(1.01)" : "translateY(0px)",
+                  transition: "transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease",
+                }}
+              >
+                <div style={{ fontWeight: 800, letterSpacing: 0.2, color: "#111", fontSize: 16 }}>
+                  {c.title}
+                </div>
+                <div style={{ marginTop: 8, color: "rgba(0,0,0,0.55)", lineHeight: 1.35, fontSize: 13 }}>
+                  {c.subtitle}
+                </div>
+              </button>
+            );
+          })}
         </div>
       </div>
     </div>
   );
 }
 
-/* ─────────────────────── CARDS ─────────────────────── */
-const rootCards: Card[] = [
-  { key: "website", title: "Build a Website", subtitle: "A structured site with strong sections.", buildType: "website", next: "websiteKind" },
-  { key: "agent", title: "Create an AI Agent", subtitle: "An agent with rules and workflows.", buildType: "agent", next: "agentKind" },
-  { key: "store", title: "Launch an Online Store", subtitle: "A store structure and product flow.", buildType: "store", next: "storeKind" },
-  { key: "document", title: "Generate a Document", subtitle: "Contracts, policies, formal documents.", buildType: "document", next: "documentKind" },
-  { key: "app", title: "Build a Web App", subtitle: "Dashboards, portals, internal tools.", buildType: "app", next: "appKind" },
-  { key: "other", title: "Something Else", subtitle: "Describe it. I’ll structure it.", buildType: "other" },
-];
+function BuilderChat({
+  buildType,
+  onRequireAuth,
+}: {
+  buildType: BuildType;
+  onRequireAuth: () => void;
+}) {
+  const [messages, setMessages] = useState<Array<{ role: "assistant" | "user"; text: string }>>([
+    {
+      role: "assistant",
+      text: `You selected: ${buildType.toUpperCase()}.\n\nDescribe exactly what you want. I will structure it and generate a complete output.`,
+    },
+  ]);
+  const [draft, setDraft] = useState("");
+  const [out, setOut] = useState("");
+  const [running, setRunning] = useState(false);
 
-const kindCards: Record<KindStage, Card[]> = {
-  documentKind: [
-    { key: "doc_personal", title: "Personal Documents", subtitle: "Letters, agreements, personal paperwork.", buildType: "document" },
-    { key: "doc_business", title: "Business Documents", subtitle: "SOPs, proposals, internal docs.", buildType: "document" },
-    { key: "doc_legal", title: "Legal Documents", subtitle: "Contracts, terms, policies.", buildType: "document" },
-    { key: "doc_marketing", title: "Marketing Docs", subtitle: "Briefs, structured copy packs.", buildType: "document" },
-    { key: "doc_other", title: "Other Document", subtitle: "Describe what you need.", buildType: "document" },
-  ],
-  websiteKind: [
-    { key: "site_personal", title: "Personal / Portfolio", subtitle: "Showcase yourself or your work.", buildType: "website" },
-    { key: "site_business", title: "Business / Corporate", subtitle: "Professional company website.", buildType: "website" },
-    { key: "site_landing", title: "Landing Page", subtitle: "High-converting single page.", buildType: "website" },
-    { key: "site_portal", title: "Client / Team Portal", subtitle: "Secure portal structure.", buildType: "website" },
-    { key: "site_other", title: "Other Website", subtitle: "Describe your idea.", buildType: "website" },
-  ],
-  agentKind: [
-    { key: "agent_secretary", title: "Executive Assistant", subtitle: "Scheduling, reminders, operations.", buildType: "agent" },
-    { key: "agent_support", title: "Customer Support", subtitle: "Helpdesk and response drafts.", buildType: "agent" },
-    { key: "agent_sales", title: "Sales Assistant", subtitle: "Lead handling and follow-up.", buildType: "agent" },
-    { key: "agent_inventory", title: "Inventory Manager", subtitle: "Stock tracking and ordering.", buildType: "agent" },
-    { key: "agent_other", title: "Other Agent", subtitle: "Describe the role.", buildType: "agent" },
-  ],
-  storeKind: [
-    { key: "store_products", title: "Product Store", subtitle: "Physical or digital products.", buildType: "store" },
-    { key: "store_services", title: "Service Business", subtitle: "Booking and payments.", buildType: "store" },
-    { key: "store_subscriptions", title: "Subscription Site", subtitle: "Memberships or SaaS.", buildType: "store" },
-    { key: "store_marketplace", title: "Marketplace", subtitle: "Multi-vendor structure.", buildType: "store" },
-    { key: "store_other", title: "Other Store", subtitle: "Describe the store.", buildType: "store" },
-  ],
-  appKind: [
-    { key: "app_dashboard", title: "Analytics Dashboard", subtitle: "Reports and KPIs.", buildType: "app" },
-    { key: "app_crm", title: "CRM / Sales Tool", subtitle: "Leads and pipeline.", buildType: "app" },
-    { key: "app_inventory", title: "Inventory System", subtitle: "Stock and alerts.", buildType: "app" },
-    { key: "app_portal", title: "Client Portal", subtitle: "Authenticated portal.", buildType: "app" },
-    { key: "app_other", title: "Other App", subtitle: "Describe the app.", buildType: "app" },
-  ],
-};
+  async function send() {
+    const prompt = draft.trim();
+    if (!prompt || running) return;
 
-/* ─────────────────────── MAIN PAGE ─────────────────────── */
-export default function NexusPage() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const projectId = useMemo(() => {
-    const v = searchParams?.get("projectId") || searchParams?.get("pid") || "";
-    return v.trim();
-  }, [searchParams]);
-
-  const [introComplete, setIntroComplete] = useState(false);
-  const [stage, setStage] = useState<Stage>("root");
-  const [buildType, setBuildType] = useState<BuildType>("website");
-  const [kindKey, setKindKey] = useState<string>("");
-
-  // ✅ Prompt Composer (multiline)
-  const [prompt, setPrompt] = useState("");
-
-  // ✅ Quick command bar (single line)
-  const [quick, setQuick] = useState("");
-
-  const [systemOut, setSystemOut] = useState("");
-  const [showOut, setShowOut] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-
-  const composerRef = useRef<HTMLTextAreaElement>(null);
-  const quickRef = useRef<HTMLInputElement>(null);
-
-  const cards: Card[] = stage === "root" ? rootCards : kindCards[stage as KindStage] || [];
-
-  const stageTitle: Record<Stage, string> = {
-    root: "WHAT WOULD YOU LIKE TO BUILD TODAY?",
-    documentKind: "SELECT DOCUMENT TYPE",
-    websiteKind: "SELECT WEBSITE TYPE",
-    agentKind: "SELECT AGENT TYPE",
-    storeKind: "SELECT STORE TYPE",
-    appKind: "SELECT APP TYPE",
-  };
-
-  const seedPrompt = (bt: BuildType, kk: string) => {
-    if (bt === "document" && kk === "doc_legal") {
-      return [
-        "Draft a complete legal agreement.",
-        "",
-        "Requirements:",
-        "- Document type: Terms of Service (or Contract / Agreement)",
-        "- Jurisdiction: Virginia, USA",
-        "- Parties: [Your Business Name] and [Customer/Client Name]",
-        "- Scope: [What this covers]",
-        "- Payment terms (if applicable): [Fees, due dates, refunds]",
-        "- Term & termination: [when it starts/ends, cancellation]",
-        "- Warranties/disclaimers",
-        "- Limitation of liability",
-        "- Governing law + venue",
-        "- Notices clause",
-        "- Entire agreement + severability",
-        "- Signature block",
-        "",
-        "Write the full document now with clear headings and clauses.",
-      ].join("\n");
-    }
-    if (bt === "document") {
-      return `Create a complete ${kk.replace(/_/g, " ")}.\n\nInclude proper structure, headings, and any standard clauses needed.\n\nDetails:\n- Purpose:\n- Parties:\n- Jurisdiction:\n- Key terms:\n`;
-    }
-    return `Build a ${kk.replace(/_/g, " ")}.\n\nGoals:\nAudience:\nSections:\nBrand tone:\nCTA:\n`;
-  };
-
-  const handleCardClick = (card: Card) => {
-    if (stage === "root") {
-      setBuildType(card.buildType);
-      setKindKey("");
-      if (card.next) setStage(card.next);
-    } else {
-      setKindKey(card.key);
-      // ✅ Populate the PROMPT COMPOSER (not the quick bar)
-      setPrompt((prev) => (prev.trim() ? prev : seedPrompt(card.buildType, card.key)));
-    }
-    setTimeout(() => composerRef.current?.focus(), 120);
-  };
-
-  const pushQuickIntoPrompt = () => {
-    const t = quick.trim();
-    if (!t) return;
-    setPrompt((p) => (p.trim() ? `${p}\n\n${t}` : t));
-    setQuick("");
-    setTimeout(() => composerRef.current?.focus(), 80);
-  };
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    const finalPrompt = prompt.trim();
-    if (!finalPrompt || isLoading) return;
-
-    setIsLoading(true);
-    setShowOut(true);
-    setSystemOut("");
+    setMessages((m) => [...m, { role: "user", text: prompt }]);
+    setDraft("");
+    setRunning(true);
+    setOut("");
 
     try {
       const res = await fetch("/api/buildlio", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          projectId: projectId || undefined,
+          // projectId optional; route will warn if missing
           buildType,
-          kindKey: kindKey || undefined,
-          messages: [{ role: "user", content: finalPrompt }],
+          messages: [{ role: "user", content: prompt }],
         }),
       });
 
-      // ✅ If server returns non-JSON or crashes, show the raw body
       const raw = await res.text();
-
-      let env: ApiEnvelope | null = null;
+      let env: any = null;
       try {
         env = JSON.parse(raw);
       } catch {
@@ -431,333 +529,417 @@ export default function NexusPage() {
       }
 
       if (!res.ok) {
-        const msg =
-          env?.error ||
-          `HTTP ${res.status} ${res.statusText}\n\nRAW RESPONSE:\n${raw.slice(0, 2000)}`;
-        setSystemOut(msg);
-        setIsLoading(false);
+        const msg = env?.error || `HTTP ${res.status} ${res.statusText}\n\n${raw.slice(0, 2000)}`;
+        setOut(msg);
+        setMessages((m) => [...m, { role: "assistant", text: "Request failed. See System Output." }]);
+        setRunning(false);
         return;
       }
 
       if (!env?.success) {
-        setSystemOut(env?.error || "Request failed (no error provided).");
-        setIsLoading(false);
+        const msg = env?.error || "Request failed.";
+        setOut(msg);
+        // If unauthorized, nudge user to login
+        if (res.status === 401 || /unauthorized/i.test(msg)) onRequireAuth();
+        setMessages((m) => [...m, { role: "assistant", text: "Request failed. See System Output." }]);
+        setRunning(false);
         return;
       }
 
-      const payload = env.data;
+      const data = env.data;
+      // For documents, prefer documents[0].content
+      const snapshot = data?.snapshot || {};
+      const isDoc = snapshot?.buildType === "document" || buildType === "document";
+      const content =
+        (isDoc && snapshot?.documents?.[0]?.content) ||
+        snapshot?.files?.["RAW_OUTPUT.txt"] ||
+        data?.message ||
+        "Generation complete.";
 
-      // Document display
-      if (payload?.snapshot?.buildType === "document") {
-        const doc = payload.snapshot.documents?.[0];
-        const content =
-          doc?.content ||
-          payload.snapshot.files?.["RAW_OUTPUT.txt"] ||
-          payload.message ||
-          "No document content returned.";
-
-        const header = doc?.title ? `${doc.title}\n\n` : "";
-        const warn = env.warning ? `⚠ ${env.warning}\n\n` : "";
-        setSystemOut(`${warn}${header}${content}`);
-        setIsLoading(false);
-        return;
+      if (env?.warning) {
+        setOut(`⚠ ${env.warning}\n\n${content}`);
+      } else {
+        setOut(content);
       }
 
-      // Non-document display
-      const out = [
-        env.warning ? `⚠ ${env.warning}` : "",
-        payload?.dominionName ? payload.dominionName : "",
-        payload?.message ? payload.message : "",
-      ]
-        .filter(Boolean)
-        .join("\n\n");
+      setMessages((m) => [
+        ...m,
+        { role: "assistant", text: "Done. Review the output below. If you want changes, tell me what to adjust." },
+      ]);
 
-      setSystemOut(out || "Generation complete.");
-      setIsLoading(false);
-    } catch (err: any) {
-      setSystemOut(`Request failed.\n\n${String(err?.message || err)}`);
-      setIsLoading(false);
+      setRunning(false);
+    } catch (e: any) {
+      setOut(String(e?.message || e));
+      setMessages((m) => [...m, { role: "assistant", text: "Request failed. See System Output." }]);
+      setRunning(false);
     }
   }
 
   return (
-    <main className={`nexus-root ${oxanium.variable} ${shareTechMono.variable} font-sans`}>
+    <div className="w-full h-full flex flex-col" style={{ background: "#fff" }}>
+      <div
+        className="flex items-center justify-between px-5"
+        style={{
+          height: 58,
+          borderBottom: "1px solid rgba(0,0,0,0.08)",
+          position: "sticky",
+          top: 0,
+          background: "rgba(255,255,255,0.90)",
+          backdropFilter: "blur(10px)",
+          zIndex: 5,
+        }}
+      >
+        <div style={{ fontWeight: 900, letterSpacing: 0.2, color: "#111" }}>Buildlio</div>
+        <div style={{ fontSize: 12, color: "rgba(0,0,0,0.55)" }}>{buildType.toUpperCase()}</div>
+      </div>
+
+      <div className="flex-1 overflow-auto px-5 py-5" style={{ maxWidth: 980, width: "100%", margin: "0 auto" }}>
+        {messages.map((m, i) => {
+          const isUser = m.role === "user";
+          return (
+            <div key={i} style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start", marginBottom: 12 }}>
+              <div
+                style={{
+                  maxWidth: "86%",
+                  padding: "12px 14px",
+                  borderRadius: 14,
+                  background: isUser ? "rgba(0,0,0,0.06)" : "rgba(0,0,0,0.03)",
+                  border: "1px solid rgba(0,0,0,0.06)",
+                  color: "#111",
+                  whiteSpace: "pre-wrap",
+                  lineHeight: 1.45,
+                }}
+              >
+                {m.text}
+              </div>
+            </div>
+          );
+        })}
+
+        <div style={{ marginTop: 18, borderTop: "1px solid rgba(0,0,0,0.08)", paddingTop: 16 }}>
+          <div style={{ fontSize: 12, letterSpacing: 1, color: "rgba(0,0,0,0.55)", fontWeight: 800 }}>
+            SYSTEM OUTPUT
+          </div>
+          <div
+            style={{
+              marginTop: 10,
+              background: "rgba(0,0,0,0.03)",
+              border: "1px solid rgba(0,0,0,0.08)",
+              borderRadius: 14,
+              padding: 14,
+              whiteSpace: "pre-wrap",
+              lineHeight: 1.55,
+              color: "#111",
+              minHeight: 180,
+            }}
+          >
+            {running ? "Working…" : out || "—"}
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="px-5 py-4"
+        style={{
+          borderTop: "1px solid rgba(0,0,0,0.08)",
+          background: "rgba(255,255,255,0.92)",
+          backdropFilter: "blur(10px)",
+        }}
+      >
+        <div style={{ maxWidth: 980, margin: "0 auto", display: "flex", gap: 10 }}>
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            placeholder="Message Buildlio…"
+            style={{
+              flex: 1,
+              minHeight: 48,
+              maxHeight: 140,
+              resize: "vertical",
+              borderRadius: 14,
+              border: "1px solid rgba(0,0,0,0.12)",
+              padding: "12px 14px",
+              outline: "none",
+              fontSize: 15,
+              lineHeight: 1.45,
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+          />
+          <button
+            onClick={send}
+            disabled={!draft.trim() || running}
+            style={{
+              width: 110,
+              borderRadius: 14,
+              border: "1px solid rgba(0,0,0,0.12)",
+              background: draft.trim() && !running ? "#111" : "rgba(0,0,0,0.08)",
+              color: draft.trim() && !running ? "#fff" : "rgba(0,0,0,0.40)",
+              fontWeight: 900,
+              letterSpacing: 0.2,
+              cursor: draft.trim() && !running ? "pointer" : "not-allowed",
+            }}
+          >
+            Send
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function Page() {
+  const router = useRouter();
+
+  const [stage, setStage] = useState<WakeStage>("void");
+  const [presenceStrength, setPresenceStrength] = useState(0.0);
+
+  const [typed, setTyped] = useState("");
+  const [lineIndex, setLineIndex] = useState(0);
+  const [charIndex, setCharIndex] = useState(0);
+  const [cardsVisible, setCardsVisible] = useState(false);
+
+  const [selectedCard, setSelectedCard] = useState<Card | null>(null);
+  const [plunge, setPlunge] = useState(false);
+
+  const [builderOn, setBuilderOn] = useState(false);
+  const buildType: BuildType = selectedCard?.buildType || "document";
+
+  // Phase scheduler
+  useEffect(() => {
+    if (stage !== "void") return;
+    const t = window.setTimeout(() => setStage("pulse"), 400);
+    return () => window.clearTimeout(t);
+  }, [stage]);
+
+  const onStageAdvance = (next: WakeStage) => {
+    // prevent regress
+    setStage((prev) => {
+      const order: WakeStage[] = ["void", "pulse", "swarm", "reticle", "greeting", "cards", "plunge", "builder"];
+      if (order.indexOf(next) <= order.indexOf(prev)) return prev;
+      return next;
+    });
+  };
+
+  // Greeting typing
+  useEffect(() => {
+    if (stage !== "greeting") return;
+
+    const currentLine = GREETING_LINES[lineIndex] || "";
+    const fullTextUpToLine = GREETING_LINES.slice(0, lineIndex).join("\n") + (lineIndex > 0 ? "\n" : "");
+    const visibleLine = currentLine.slice(0, charIndex);
+
+    setTyped(fullTextUpToLine + visibleLine);
+
+    let speed = 18;
+    if (lineIndex === 0) speed = 14; // quick
+    if (lineIndex === 1) speed = 20; // slower
+    if (lineIndex === 2) speed = 18;
+
+    const doneLine = charIndex >= currentLine.length;
+    if (!doneLine) {
+      const t = window.setTimeout(() => setCharIndex((c) => c + 1), speed);
+      return () => window.clearTimeout(t);
+    }
+
+    // pause between lines
+    const pause = lineIndex === 0 ? 300 : lineIndex === 1 ? 400 : 450;
+    const t2 = window.setTimeout(() => {
+      if (lineIndex < GREETING_LINES.length - 1) {
+        setLineIndex((i) => i + 1);
+        setCharIndex(0);
+      } else {
+        // greeting done → cards
+        setStage("cards");
+        setCardsVisible(true);
+      }
+    }, pause);
+    return () => window.clearTimeout(t2);
+  }, [stage, lineIndex, charIndex]);
+
+  // if stage is greeting but typed not initialized, ensure it begins
+  useEffect(() => {
+    if (stage === "greeting" && typed === "" && lineIndex === 0 && charIndex === 0) {
+      // kick typing loop via effect dependency
+      setTyped("");
+    }
+  }, [stage, typed, lineIndex, charIndex]);
+
+  const handleSelect = (c: Card) => {
+    setSelectedCard(c);
+    // plunge transition
+    setStage("plunge");
+    setPlunge(true);
+    window.setTimeout(() => {
+      setBuilderOn(true);
+      setStage("builder");
+    }, 520);
+  };
+
+  return (
+    <div style={{ minHeight: "100vh", background: "#fff", color: "#111" }}>
       <style jsx global>{`
-        :root { --cyan:#00f9ff; --magenta:#c026d3; --glass: rgba(10,15,35,0.4); --glass-border: rgba(0,249,255,0.15); }
-        body, html { margin:0; padding:0; background:#020208; color:#e8f4ff; }
-        .nexus-root { min-height:100vh; overflow-x:hidden; position:relative; background: radial-gradient(circle at 50% 0%, #0a1128 0%, #020208 70%); }
-
-        @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
-        .animate-blink{ animation: blink 1s step-end infinite; }
-        .text-shadow-glow{ text-shadow: 0 0 10px rgba(0,249,255,0.4); }
-
-        .hud{
-          position:fixed; top:0; left:0; right:0; z-index:200;
-          display:flex; align-items:center; justify-content:space-between;
-          padding: 1.2rem 3rem;
-          background: linear-gradient(180deg, rgba(2,2,8,0.9) 0%, transparent 100%);
-          backdrop-filter: blur(10px);
-          border-bottom: 1px solid rgba(0,249,255,0.1);
+        html, body {
+          height: 100%;
+          margin: 0;
+          background: #fff;
         }
-        .hud-brand{ font-size:1.4rem; font-weight:800; letter-spacing:10px; color:#fff; text-shadow:0 0 20px var(--cyan); display:flex; align-items:center; gap:12px;}
-        .hud-brand::before{ content:''; display:block; width:10px; height:10px; background:var(--cyan); border-radius:50%; box-shadow:0 0 15px var(--cyan); }
-        .neural-login-btn{
-          font-family: var(--font-mono); font-size:0.8rem; letter-spacing:2px;
-          padding: 0.55rem 1.2rem; border:1px solid var(--glass-border);
-          background: rgba(0,249,255,0.05); color: var(--cyan);
-          border-radius: 6px; transition: all .2s ease; text-transform: uppercase;
-        }
-        .neural-login-btn:hover{ background: var(--cyan); color:#000; box-shadow:0 0 20px var(--cyan); }
-
-        .stage-header{ padding: 7rem 2rem 1.5rem; text-align:center; position:relative; z-index:10; }
-        .stage-title{
-          font-size:1.6rem; font-weight:700; letter-spacing:6px; text-transform:uppercase;
-          background: linear-gradient(90deg, #fff, var(--cyan));
-          -webkit-background-clip:text; -webkit-text-fill-color:transparent;
-          text-shadow: 0 0 30px rgba(0,249,255,0.25);
-        }
-
-        .layout{
-          width:min(1300px, 94%);
-          margin: 0 auto;
-          display:grid;
-          grid-template-columns: 1.2fr 0.8fr;
-          gap: 1.5rem;
-          padding-bottom: 12rem;
-          position: relative;
-          z-index: 10;
-        }
-
-        .holo-grid{
-          display:grid;
-          grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-          gap: 1.2rem;
-        }
-
-        .holo-card{
-          background: var(--glass);
-          border: 1px solid var(--glass-border);
-          border-radius: 16px;
-          padding: 1.8rem 1.6rem;
-          backdrop-filter: blur(18px);
-          -webkit-backdrop-filter: blur(18px);
-          transition: all .25s ease;
-          text-align:left;
-          display:flex;
-          flex-direction:column;
-          align-items:flex-start;
-          box-shadow: inset 0 0 0 1px rgba(255,255,255,0.02), 0 10px 30px rgba(0,0,0,0.45);
-        }
-        .holo-card:hover{ border-color: var(--cyan); transform: translateY(-4px); box-shadow: 0 15px 40px -10px rgba(0,249,255,0.25), inset 0 0 20px rgba(0,249,255,0.05); }
-
-        .card-icon{ width:44px; height:44px; margin-bottom: 1rem; color: var(--cyan); filter: drop-shadow(0 0 10px rgba(0,249,255,0.45)); }
-        .card-title{ font-size: 1.25rem; font-weight: 750; margin-bottom: .6rem; color:#fff; letter-spacing:.5px; }
-        .card-subtitle{ font-size: .95rem; color:#8fa6c7; line-height:1.55; font-family: var(--font-mono); }
-
-        .panel{
-          background: rgba(3,5,15,0.6);
-          border: 1px solid rgba(0,249,255,0.25);
-          border-radius: 16px;
-          backdrop-filter: blur(20px);
-          -webkit-backdrop-filter: blur(20px);
-          box-shadow: 0 20px 50px rgba(0,0,0,0.6);
-          overflow:hidden;
-        }
-
-        .panel-head{
-          padding: .9rem 1.2rem;
-          border-bottom: 1px solid rgba(0,249,255,0.12);
-          display:flex;
-          align-items:center;
-          justify-content:space-between;
-          font-family: var(--font-mono);
-          letter-spacing: 2px;
-          text-transform: uppercase;
-          font-size: .75rem;
-          color: var(--cyan);
-        }
-
-        .composer{
-          padding: 1rem;
-        }
-
-        textarea{
-          width:100%;
-          min-height: 220px;
-          resize: vertical;
-          background: rgba(0,0,0,0.25);
-          border: 1px solid rgba(255,255,255,0.08);
-          border-radius: 12px;
-          padding: 1rem;
-          color: #e8f4ff;
-          font-size: 1rem;
-          outline: none;
-          font-family: var(--font-mono);
-          line-height: 1.55;
-        }
-
-        .btnrow{
-          display:flex;
-          gap:.8rem;
-          margin-top:.9rem;
-        }
-
-        .btn{
-          flex:1;
-          padding: 0.95rem 1rem;
-          border-radius: 12px;
-          border: 1px solid rgba(0,249,255,0.25);
-          background: rgba(0,249,255,0.06);
-          color: var(--cyan);
-          font-weight: 800;
-          letter-spacing: 2px;
-          text-transform: uppercase;
-          cursor: pointer;
-          transition: all .2s ease;
-          font-family: var(--font-sans);
-        }
-        .btn:hover{ background: rgba(0,249,255,0.14); box-shadow: 0 0 24px rgba(0,249,255,0.18); }
-        .btn:disabled{ opacity:.5; cursor:not-allowed; box-shadow:none; }
-
-        .quickbar{
-          display:flex;
-          gap:.75rem;
-        }
-        .quickbar input{
-          flex: 1;
-          background: rgba(0,0,0,0.25);
-          border: 1px solid rgba(255,255,255,0.08);
-          border-radius: 12px;
-          padding: .9rem 1rem;
-          color: #e8f4ff;
-          outline:none;
-          font-family: var(--font-sans);
-          font-size: 1rem;
-        }
-
-        .out{
-          padding: 1rem 1.2rem 1.4rem;
-          white-space: pre-wrap;
-          font-family: var(--font-mono);
-          line-height: 1.65;
-          color: #d1e4ff;
-          min-height: 220px;
-        }
-
-        .tag{
-          display:inline-block;
-          padding: .2rem .55rem;
-          border: 1px solid rgba(0,249,255,0.35);
-          border-radius: 8px;
-          color: var(--cyan);
-          font-family: var(--font-mono);
-          font-size: .72rem;
-          letter-spacing: 2px;
-        }
+        * { box-sizing: border-box; }
       `}</style>
 
-      <AetherLattice />
-      <div className="fixed inset-0 pointer-events-none z-[999] opacity-[0.03] bg-[linear-gradient(transparent_50%,rgba(0,0,0,1)_50%)] bg-[length:100%_4px]" />
+      <Grain />
+      <BuildlioAwakeningCanvas stage={stage} onStageAdvance={onStageAdvance} setPresenceStrength={setPresenceStrength} />
+      <ReticleOverlay strength={presenceStrength} />
 
-      {!introComplete ? (
-        <IntroSequence onComplete={() => setIntroComplete(true)} />
-      ) : (
-        <>
-          <nav className="hud">
-            <div className="hud-brand">BUILDLIO</div>
-            <button className="neural-login-btn" onClick={() => router.push("/login")}>
-              Neural Login
-            </button>
-          </nav>
-
-          <div className="stage-header">
-            <h1 className="stage-title">{stageTitle[stage]}</h1>
-          </div>
-
-          <div className="layout">
-            {/* LEFT: cards */}
-            <div className="holo-grid">
-              {cards.map((c) => (
-                <button key={c.key} className="holo-card" onClick={() => handleCardClick(c)}>
-                  <div className="card-icon">{(Icons as any)[c.buildType] || Icons.other}</div>
-                  <div className="card-title">{c.title}</div>
-                  <div className="card-subtitle">{c.subtitle}</div>
-                </button>
-              ))}
-            </div>
-
-            {/* RIGHT: prompt composer + output */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "1.2rem" }}>
-              <div className="panel">
-                <div className="panel-head">
-                  <span>Prompt Composer</span>
-                  <span className="tag">
-                    {buildType.toUpperCase()}
-                    {kindKey ? ` / ${kindKey.toUpperCase()}` : ""}
-                  </span>
-                </div>
-                <div className="composer">
-                  <textarea
-                    ref={composerRef}
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    placeholder="Your full request goes here (multi-line). Clicking cards will seed this composer."
-                  />
-                  <div className="btnrow">
-                    <button
-                      className="btn"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setPrompt("");
-                        setKindKey("");
-                        setStage("root");
-                      }}
-                      disabled={isLoading}
-                      type="button"
-                    >
-                      Reset
-                    </button>
-                    <button className="btn" onClick={handleSubmit as any} disabled={!prompt.trim() || isLoading} type="button">
-                      {isLoading ? "MANIFESTING…" : "Initialize"}
-                    </button>
-                  </div>
-
-                  <div style={{ marginTop: ".9rem" }} className="quickbar">
-                    <input
-                      ref={quickRef}
-                      value={quick}
-                      onChange={(e) => setQuick(e.target.value)}
-                      placeholder="Quick add (single line) — press Enter to append"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          pushQuickIntoPrompt();
-                        }
-                      }}
-                    />
-                    <button className="btn" type="button" onClick={pushQuickIntoPrompt} disabled={!quick.trim() || isLoading}>
-                      Add
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {showOut && (
-                <div className="panel">
-                  <div className="panel-head">
-                    <span>System.Out</span>
-                    <span className="tag">{isLoading ? "RUNNING" : "READY"}</span>
-                  </div>
-                  <div className="out">
-                    {systemOut || (isLoading ? "Working…" : "—")}
-                    <span className="animate-blink" style={{ marginLeft: 8, display: "inline-block", width: 6, height: 16, background: "var(--cyan)", verticalAlign: "middle" }} />
-                  </div>
-                </div>
+      {/* Greeting (center) */}
+      {!builderOn && (
+        <div className="fixed inset-0 z-[20] flex items-center justify-center px-6">
+          <div
+            style={{
+              width: "100%",
+              maxWidth: 760,
+              textAlign: "center",
+              opacity: stage === "greeting" || stage === "cards" || stage === "plunge" ? 1 : 0,
+              transform: stage === "greeting" || stage === "cards" || stage === "plunge" ? "translateY(0px)" : "translateY(6px)",
+              transition: "opacity 450ms ease, transform 450ms ease",
+              pointerEvents: "none",
+            }}
+          >
+            <div
+              style={{
+                fontSize: 28,
+                fontWeight: 900,
+                letterSpacing: -0.2,
+                lineHeight: 1.2,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {typed}
+              {stage === "greeting" && (
+                <span
+                  style={{
+                    display: "inline-block",
+                    width: 8,
+                    height: 22,
+                    marginLeft: 6,
+                    background: "#111",
+                    opacity: 0.65,
+                    verticalAlign: "middle",
+                    animation: "blink 1s step-end infinite",
+                  }}
+                />
               )}
             </div>
+
+            <style jsx>{`
+              @keyframes blink {
+                0%,
+                100% {
+                  opacity: 0.65;
+                }
+                50% {
+                  opacity: 0;
+                }
+              }
+            `}</style>
+
+            <div style={{ marginTop: 18, fontSize: 14, color: "rgba(0,0,0,0.55)" }}>
+              Buildlio.Site — websites, documents, apps, stores, agents.
+            </div>
+
+            <div style={{ marginTop: 18, display: "flex", gap: 10, justifyContent: "center", pointerEvents: "auto" }}>
+              <button
+                onClick={() => router.push("/pricing")}
+                style={{
+                  borderRadius: 999,
+                  padding: "10px 14px",
+                  border: "1px solid rgba(0,0,0,0.12)",
+                  background: "rgba(0,0,0,0.03)",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                Pricing
+              </button>
+              <button
+                onClick={() => router.push("/login")}
+                style={{
+                  borderRadius: 999,
+                  padding: "10px 14px",
+                  border: "1px solid rgba(0,0,0,0.12)",
+                  background: "rgba(0,0,0,0.03)",
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                Login
+              </button>
+            </div>
           </div>
-        </>
+        </div>
       )}
-    </main>
+
+      {/* Cards */}
+      {!builderOn && <Cards visible={cardsVisible && stage !== "plunge"} selectedKey={selectedCard?.key || null} onSelect={handleSelect} />}
+
+      {/* Plunge overlay */}
+      {!builderOn && (
+        <div
+          className="fixed inset-0 z-[40] pointer-events-none"
+          style={{
+            opacity: plunge ? 1 : 0,
+            background: "rgba(0,0,0,0.03)",
+            transition: "opacity 220ms ease",
+          }}
+        />
+      )}
+      {!builderOn && selectedCard && (
+        <div
+          className="fixed left-1/2 top-1/2 z-[50]"
+          style={{
+            transform: plunge ? "translate(-50%, -50%) scale(1.12)" : "translate(-50%, -50%) scale(1)",
+            opacity: plunge ? 0 : 1,
+            transition: "transform 350ms ease, opacity 350ms ease",
+            pointerEvents: "none",
+          }}
+        >
+          <div
+            style={{
+              width: 380,
+              borderRadius: 18,
+              border: "1px solid rgba(0,0,0,0.12)",
+              background: "#fff",
+              boxShadow: "0 24px 80px rgba(0,0,0,0.14)",
+              padding: 18,
+              textAlign: "left",
+            }}
+          >
+            <div style={{ fontWeight: 900, fontSize: 16 }}>{selectedCard.title}</div>
+            <div style={{ marginTop: 8, color: "rgba(0,0,0,0.55)", fontSize: 13 }}>{selectedCard.subtitle}</div>
+            <div style={{ marginTop: 14, fontSize: 12, color: "rgba(0,0,0,0.50)", fontWeight: 800 }}>
+              INITIALIZING…
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Builder */}
+      {builderOn && (
+        <div className="fixed inset-0 z-[60]">
+          <BuilderChat
+            buildType={buildType}
+            onRequireAuth={() => {
+              // do not force redirect; just guide user toward auth
+              // (you can change this to router.push("/login") if you want hard-gating)
+              console.log("Auth required");
+            }}
+          />
+        </div>
+      )}
+    </div>
   );
 }
