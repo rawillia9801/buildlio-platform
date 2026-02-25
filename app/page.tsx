@@ -50,8 +50,9 @@ function ParticleField() {
     const canvasEl = canvasRef.current;
     if (!canvasEl) return;
 
-    const ctx = canvasEl.getContext("2d");
-    if (!ctx) return;
+    const ctxMaybe = canvasEl.getContext("2d");
+if (!ctxMaybe) return;
+const ctx = ctxMaybe; // ✅ ctx is now guaranteed non-null everywhere below
 
     let raf: number | null = null;
     let W = 0;
