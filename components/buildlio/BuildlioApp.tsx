@@ -720,7 +720,7 @@ ${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
               <div className="h-14 border-b border-zinc-200 bg-white flex items-center px-6 gap-2 overflow-x-auto">
                 {buildType !== "document" && isSiteSnapshot(snapshot) && (
                   <>
-                    {snapshot.pages.map((p: any) => (
+                    {snapshot?.pages?.map((p: any) => (
                       <button
                         key={p.slug}
                         onClick={() => setActivePageSlug(p.slug)}
