@@ -1,766 +1,919 @@
-/* FILE: components/buildlio/BuildlioApp.tsx */
-"use client";
+// FILE: app/api/claude-test/route.ts
+// BUILDLIO.SITE — v5.6 Backend (Ultra Hi-Tech Builder Tone + Anti-Summary Gates + Stronger Creative Brief)
+//
+// CHANGELOG
+// - v5.6
+//   * ENHANCE: “Builder mode” system prompt — explicitly forbids strategy memos (architecture/performance/timeline/stack recs)
+//   * ENHANCE: Anti-summary / anti-consulting hard-gate phrases + structural checks (rejects “Estimated timeline”, “Tech stack recommendation”, etc.)
+//   * ENHANCE: Stronger creative brief: ultra high-tech refined minimalism, friendly + thorough, but always outputs build artifacts
+//   * ENHANCE: Agent/spec fingerprint rejection (NEXUS-style specs, tool lists, guardrails, YAML/markdown headings)
+//   * ENHANCE: Artifact-shape gate: rejects outputs that don’t match snapshot schema for the selected buildType
+//   * ENHANCE: Polish pass instruction is sharper: rebuild as snapshot, not a memo; includes banlist + required structure reminders
+//   * KEEP: Vision Splash Flow hints preserved in meta
+//   * KEEP: Document second-step chooser supported
+//   * KEEP: Dual validators + buildType segregation pages vs documents
+//   * KEEP: JSON-only output, extraction, retry “polish pass”, RPC save_version_and_charge_credit on success
+//
+// ANCHOR:ENV
+// - NEXT_PUBLIC_SUPABASE_URL=...
+// - NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+// - ANTHROPIC_API_KEY=... (server-only)
+//
+// ANCHOR:DB
+// - RPC: save_version_and_charge_credit(p_project_id uuid, p_owner_id uuid, p_snapshot jsonb, p_note text, p_model text)
 
-import React, { memo, useEffect, useMemo, useRef, useState } from "react";
-import { Inter, Fira_Code } from "next/font/google";
-import { createBrowserClient } from "@supabase/ssr";
+import { Anthropic } from "@anthropic-ai/sdk";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+import { NextResponse } from "next/server";
 
-import BuildlioSplash from "@/components/buildlio/BuildlioSplash";
-import TopNav from "@/components/buildlio/TopNav";
-import SitePreview from "@/components/buildlio/SitePreview";
-import DocumentPreview from "@/components/buildlio/DocumentPreview";
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+export const maxDuration = 90;
 
-import type { AnySnapshot, BuildChoice, BuildType, LogEntry, Message, Tab, UserLite, ViewState } from "@/lib/buildlio-types";
-import {
-  choiceToBuildType,
-  isDocSnapshot,
-  isSiteSnapshot,
-  makePromptForChoice,
-  sleep,
-} from "@/lib/buildlio-utils";
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY || "",
+});
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter", display: "swap" });
-const fira = Fira_Code({ subsets: ["latin"], variable: "--font-fira", display: "swap" });
+type BuildType = "website" | "landing_page" | "application" | "document" | "store" | "other";
 
-export default function BuildlioApp() {
-  const [view, setView] = useState<ViewState>("landing");
+// Vision Splash Flow hints (optional; UI-driven)
+type SplashChoice = "sync" | "sploosh" | "ripple" | "none";
+type BuildConsoleMode = "white_console" | "standard" | "none";
 
-  // Splash control
-  const [showSplash, setShowSplash] = useState(true);
-  const [firstChoice, setFirstChoice] = useState<BuildChoice | null>(null);
-  const [buildType, setBuildType] = useState<BuildType>("website");
+type SiteSnapshot = {
+  appName: string;
+  tagline?: string;
+  navigation?: { items: string[] };
+  meta?: {
+    buildType?: BuildType;
+    intent?: string;
 
-  // Pending prompt to auto-send after selection/login
-  const [pendingPrompt, setPendingPrompt] = useState<string | null>(null);
-  const [hasAutoSent, setHasAutoSent] = useState(false);
+    splashChoice?: SplashChoice;
+    buildConsoleMode?: BuildConsoleMode;
+    documentCategory?: DocumentItem["category"];
+    jurisdiction?: string;
+  };
+  pages: Array<{ slug: string; title?: string; blocks: any[] }>;
+};
 
-  const supabase = useMemo(
-    () => createBrowserClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!),
-    []
-  );
+type DocumentItem = {
+  id: string;
+  title: string;
+  category:
+    | "letter"
+    | "cease_and_desist"
+    | "bill_of_sale"
+    | "health_guarantee"
+    | "contract"
+    | "policy"
+    | "packet"
+    | "proposal"
+    | "other";
+  jurisdiction?: string;
+  format: "html";
+  body_html: string;
+  fields?: Array<{ key: string; label: string; type: "text" | "date" | "number" | "checkbox"; required?: boolean }>;
+  warnings?: string[];
+};
 
-  const [user, setUser] = useState<UserLite | null>(null);
-  const [loginEmail, setLoginEmail] = useState("");
-  const [loginPassword, setLoginPassword] = useState("");
+type DocSnapshot = {
+  appName: string;
+  meta?: {
+    buildType?: BuildType;
+    intent?: string;
 
-  const [projectId, setProjectId] = useState("");
-  const [isRunning, setIsRunning] = useState(false);
+    splashChoice?: SplashChoice;
+    buildConsoleMode?: BuildConsoleMode;
+    documentCategory?: DocumentItem["category"];
+    jurisdiction?: string;
+  };
+  documents: DocumentItem[];
+};
 
-  const [snapshot, setSnapshot] = useState<AnySnapshot | null>(null);
-  const [history, setHistory] = useState<any[]>([]);
+type BuildlioResponse =
+  | { type: "chat"; message: string }
+  | { type: "build"; message: string; snapshot: SiteSnapshot | DocSnapshot };
 
-  // Website page state
-  const [activePageSlug, setActivePageSlug] = useState("index");
+/* -----------------------------
+ANCHOR:UTILS
+-------------------------------- */
+function safeString(v: any) {
+  return typeof v === "string" ? v : "";
+}
+function normalizeWhitespace(s: any) {
+  return safeString(s).replace(/\s+/g, " ").trim();
+}
+function isNonEmptyString(v: any) {
+  return typeof v === "string" && v.trim().length > 0;
+}
+function arr(v: any) {
+  return Array.isArray(v) ? v : [];
+}
+function getBlock(blocks: any[], type: string) {
+  return arr(blocks).find((b) => b && b.type === type);
+}
+function containsAny(haystack: string, needles: string[]) {
+  const h = (haystack || "").toLowerCase();
+  return needles.some((n) => h.includes(String(n).toLowerCase()));
+}
 
-  // Document state
-  const [activeDocId, setActiveDocId] = useState("doc_1");
+// Tries hard to extract the first valid JSON object from model text.
+// (Keeps your original behavior but with slightly more defensive trimming.)
+function extractJson(raw: string) {
+  let out = raw || "{}";
+  const firstBrace = out.indexOf("{");
+  const lastBrace = out.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    out = out.slice(firstBrace, lastBrace + 1);
+  }
+  return out.trim();
+}
 
-  const [creditBalance, setCreditBalance] = useState(10);
+/* -----------------------------
+ANCHOR:ANTI_SUMMARY_GATES
+-------------------------------- */
+// “Consultant memo” phrases that should never appear in a BUILD artifact.
+const CONSULTING_MEMO_PHRASES = [
+  "estimated timeline",
+  "timeline:",
+  "4-6 weeks",
+  "technical stack recommendation",
+  "stack recommendation",
+  "information architecture",
+  "performance targets",
+  "speed metrics",
+  "core web vitals",
+  "lighthouse performance",
+  "would you like me to elaborate",
+  "i can elaborate",
+  "let me know if you want",
+  "here’s a breakdown",
+  "scope:",
+  "supporting pages",
+  "technical standards",
+];
 
-  // Chat
-  const [chatInput, setChatInput] = useState("");
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      role: "assistant",
-      content: "Hi — I’m Buildlio. Tell me what you’re building, and I’ll guide you calmly step-by-step to a professional result.",
-    },
-  ]);
+function snapshotLooksLikeMemo(parsed: any): boolean {
+  const s = JSON.stringify(parsed || {});
+  return containsAny(s, CONSULTING_MEMO_PHRASES);
+}
 
-  const messagesEndRef = useRef<HTMLDivElement>(null);
-  const chatInputRef = useRef<HTMLInputElement>(null);
+/* -----------------------------
+ANCHOR:ANTI_AGENT_SPEC_FINGERPRINTS
+-------------------------------- */
+// These catch “NEXUS-7” / agent spec documents that sneak in as content.
+const AGENT_SPEC_FINGERPRINTS = [
+  "primary mission",
+  "core directive",
+  "success metrics",
+  "available tools",
+  "data collection",
+  "action & communication",
+  "decision support",
+  "escalation triggers",
+  "critical guardrails",
+  "fail-safe mechanisms",
+  "operational framework",
+  "continuous learning loop",
+  "role-based permissions",
+  "least privilege",
+  "gdpr/ccpa",
+  "risk prediction",
+  "uptime",
+  "yaml",
+  "prohibited actions",
+  "circuit breakers",
+];
 
-  // Console & Tabs
-  const [activeTab, setActiveTab] = useState<Tab>("chat");
-  const [buildLogs, setBuildLogs] = useState<LogEntry[]>([]);
+function containsMarkdownish(raw: string) {
+  const s = raw || "";
+  // headings like ## Title, fenced code blocks, and bold-list patterns
+  if (/(^|\n)\s*#{2,}\s+/m.test(s)) return true;
+  if (/```/.test(s)) return true;
+  if (/(^|\n)\s*-\s+\*\*/m.test(s)) return true;
+  return false;
+}
 
-  const addLog = (message: string, type: LogEntry["type"] = "info") => {
-    setBuildLogs((prev) => [
-      ...prev,
-      {
-        timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }),
-        message,
-        type,
-      },
-    ]);
+function looksLikeAgentSpec(obj: any) {
+  const s = JSON.stringify(obj || {}).toLowerCase();
+  if (containsAny(s, AGENT_SPEC_FINGERPRINTS)) return true;
+  if (containsMarkdownish(s)) return true;
+  return false;
+}
+
+/* -----------------------------
+ANCHOR:ARTIFACT_SHAPE_GATE
+-------------------------------- */
+// Rejects “valid JSON” that isn’t actually your artifact schema.
+function shapeGate(parsed: any, buildType: BuildType): { ok: boolean; reason?: string } {
+  if (!parsed || (parsed.type !== "chat" && parsed.type !== "build")) return { ok: false, reason: "Missing/invalid type" };
+
+  if (parsed.type === "chat") {
+    if (typeof parsed.message !== "string") return { ok: false, reason: "Chat missing message" };
+    return { ok: true };
+  }
+
+  const snap = parsed.snapshot;
+  if (!snap || typeof snap !== "object") return { ok: false, reason: "Build missing snapshot" };
+
+  // HARD-GATE: forbid both branches at once
+  const hasPages = Array.isArray((snap as any).pages);
+  const hasDocs = Array.isArray((snap as any).documents);
+
+  if (buildType === "document") {
+    if (hasPages && (snap as any).pages?.length) return { ok: false, reason: "Document build must not include pages" };
+    if (!hasDocs) return { ok: false, reason: "Document build missing documents[]" };
+    if (!isNonEmptyString((snap as any).appName)) return { ok: false, reason: "Missing appName" };
+    return { ok: true };
+  }
+
+  // Non-document
+  if (hasDocs && (snap as any).documents?.length) return { ok: false, reason: "Website build must not include documents" };
+  if (!hasPages) return { ok: false, reason: "Non-document build missing pages[]" };
+  if (!isNonEmptyString((snap as any).appName)) return { ok: false, reason: "Missing appName" };
+  return { ok: true };
+}
+
+/* -----------------------------
+ANCHOR:COPY_QUALITY
+-------------------------------- */
+const GENERIC_BAD = [
+  "innovative",
+  "cutting-edge",
+  "next-level",
+  "revolutionize",
+  "game-changer",
+  "best-in-class",
+  "synergy",
+  "unlock your potential",
+  "elevate your",
+  "we are passionate",
+  "state-of-the-art",
+  "seamless solution",
+  "powerful platform",
+  "ultimate",
+];
+
+const TOO_VAGUE = ["for everyone", "for anyone", "all businesses", "any business", "top-notch", "amazing", "incredible", "unmatched"];
+
+function hasSpecificitySignals(text: string) {
+  const t = (text || "").toLowerCase();
+  const hasNumber = /\d/.test(t);
+  const hasConcreteNouns =
+    /(calls|bookings|leads|appointments|orders|checkout|invoices|quotes|estimates|calendar|crm|pipeline|onboarding|templates|contracts|deliverables|export|ownership|domain|storefront|catalog|cart|sku|inventory|shipping|case study|case studies|portfolio|resume|cv|speaking|talks|engagements)/.test(
+      t
+    );
+  const hasAudience =
+    /(for (senior|executive|busy|solo|independent|new|growing|service|trade|clinic|salon|agency|coach|creator|designer|architect|consultant|founder|studio|team|company|brand|enterprise))/i.test(
+      text || ""
+    );
+  return hasNumber || (hasConcreteNouns && hasAudience);
+}
+
+/* -----------------------------
+ANCHOR:BUILD_TYPE_DETECT
+-------------------------------- */
+function canonicalizeBuildType(raw: any): BuildType | null {
+  const t0 = normalizeWhitespace(raw).toLowerCase();
+  if (!t0) return null;
+
+  const t = t0.replace(/[-\s]+/g, "_").replace(/__+/g, "_").trim();
+
+  if (t === "landing") return "landing_page";
+  if (t === "landingpage") return "landing_page";
+  if (t === "landing_page") return "landing_page";
+
+  if (t === "website") return "website";
+
+  if (t === "application") return "application";
+  if (t === "app") return "application";
+  if (t === "portal") return "application";
+
+  if (t === "document") return "document";
+  if (t === "documents") return "document";
+  if (t === "docs") return "document";
+
+  if (t === "store") return "store";
+  if (t === "shop") return "store";
+  if (t === "ecommerce") return "store";
+
+  if (t === "other") return "other";
+
+  return null;
+}
+
+function canonicalizeSplashChoice(raw: any): SplashChoice | null {
+  const t = normalizeWhitespace(raw).toLowerCase();
+  if (!t) return null;
+  const x = t.replace(/[-\s]+/g, "_").trim();
+  if (x === "sync") return "sync";
+  if (x === "sploosh" || x === "splosh" || x === "splash") return "sploosh";
+  if (x === "ripple" || x === "ripples") return "ripple";
+  if (x === "none" || x === "off") return "none";
+  return null;
+}
+
+function canonicalizeBuildConsoleMode(raw: any): BuildConsoleMode | null {
+  const t = normalizeWhitespace(raw).toLowerCase();
+  if (!t) return null;
+  const x = t.replace(/[-\s]+/g, "_").trim();
+  if (x === "white_console" || x === "white" || x === "console_white") return "white_console";
+  if (x === "standard" || x === "default") return "standard";
+  if (x === "none" || x === "off") return "none";
+  return null;
+}
+
+function canonicalizeDocumentCategory(raw: any): DocumentItem["category"] | null {
+  const t = normalizeWhitespace(raw).toLowerCase();
+  if (!t) return null;
+  const x = t.replace(/[-\s]+/g, "_").trim();
+
+  const allowed: Record<string, DocumentItem["category"]> = {
+    letter: "letter",
+    cease_and_desist: "cease_and_desist",
+    cease: "cease_and_desist",
+    cnd: "cease_and_desist",
+    bill_of_sale: "bill_of_sale",
+    bill: "bill_of_sale",
+    sale: "bill_of_sale",
+    health_guarantee: "health_guarantee",
+    guarantee: "health_guarantee",
+    contract: "contract",
+    agreement: "contract",
+    policy: "policy",
+    packet: "packet",
+    proposal: "proposal",
+    other: "other",
   };
 
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => setUser(data?.user ? { email: data.user.email, id: data.user.id } : null));
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_, session) =>
-      setUser(session?.user ? { email: session.user.email, id: session.user.id } : null)
-    );
-    return () => subscription.unsubscribe();
-  }, [supabase]);
+  return allowed[x] || null;
+}
 
-  useEffect(() => {
-    if (view === "builder" && projectId) fetchHistory();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, view]);
+function detectBuildTypeFromText(messages: any[]): BuildType | null {
+  const lastUser = [...(messages || [])].reverse().find((m) => m?.role === "user");
+  const t = normalizeWhitespace(lastUser?.content).toLowerCase();
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  const m = t.match(
+    /(^|\n)\s*type\s*:\s*(website|landing[_\-\s]*page|landingpage|landing|application|app|portal|document|documents|docs|store|shop|ecommerce|other)\s*(\n|$)/i
+  );
+  if (m?.[2]) return canonicalizeBuildType(m[2]);
 
-  useEffect(() => {
-    if (view === "builder" && activeTab === "chat" && !isRunning) {
-      const t = window.setTimeout(() => chatInputRef.current?.focus(), 0);
-      return () => window.clearTimeout(t);
+  if (/(store|shop|checkout|cart|products|sku|inventory|shipping|returns)/i.test(t)) return "store";
+  if (/(application|dashboard|login|roles|admin|workflow|crud|portal|audit trail)/i.test(t)) return "application";
+  if (/(document|documents|letter|letters|proposal|contract|policy|terms|agreement|handbook|guide|cease and desist|bill of sale|health guarantee)/i.test(t))
+    return "document";
+  if (/(landing page|single page|one page|lead capture|waitlist|signup|book a call)/i.test(t)) return "landing_page";
+  if (t.length > 0) return "website";
+
+  return null;
+}
+
+/* -----------------------------
+ANCHOR:VALIDATORS
+-------------------------------- */
+function validateWebsiteBuild(parsed: any): { ok: boolean; reason?: string } {
+  if (parsed?.type !== "build") return { ok: false, reason: "Not a build response" };
+
+  // Hard blocks: memo/spec
+  if (snapshotLooksLikeMemo(parsed)) return { ok: false, reason: "Output looks like a strategy memo (must generate page blocks)" };
+  if (looksLikeAgentSpec(parsed)) return { ok: false, reason: "Output resembles an agent/spec document (must generate page blocks)" };
+
+  // Shape gate (prevents “valid JSON” that isn't your schema)
+  const sg = shapeGate(parsed, "website");
+  if (!sg.ok) return sg;
+
+  const snap = parsed?.snapshot;
+  if (!snap) return { ok: false, reason: "Missing snapshot" };
+
+  // HARD-GATE: website builds must not include documents
+  if (Array.isArray((snap as any)?.documents) && (snap as any).documents.length > 0) {
+    return { ok: false, reason: "Website build must not include snapshot.documents" };
+  }
+
+  if (!isNonEmptyString((snap as any).appName)) return { ok: false, reason: "Missing appName" };
+  if (!Array.isArray((snap as any).pages) || (snap as any).pages.length < 1) return { ok: false, reason: "Missing pages" };
+
+  const page0 = (snap as any).pages[0];
+  if (!page0 || !Array.isArray(page0.blocks)) return { ok: false, reason: "Missing blocks" };
+
+  const blocks = page0.blocks;
+  const required = ["hero", "features", "stats", "testimonials", "pricing", "faq", "content", "cta"];
+  const types = new Set(blocks.map((b: any) => b?.type));
+  for (const r of required) if (!types.has(r)) return { ok: false, reason: `Missing block: ${r}` };
+
+  const hero = getBlock(blocks, "hero");
+  const headline = normalizeWhitespace(hero?.headline);
+  const subhead = normalizeWhitespace(hero?.subhead);
+
+  if (headline.length < 18) return { ok: false, reason: "Hero headline too short" };
+  if (headline.split(" ").length < 6 || headline.split(" ").length > 18) return { ok: false, reason: "Hero headline word-count off" };
+  if (subhead.length < 120) return { ok: false, reason: "Hero subhead too thin" };
+  if (subhead.length > 260) return { ok: false, reason: "Hero subhead too long" };
+
+  const heroCombined = `${headline} ${subhead}`;
+  if (containsAny(heroCombined, GENERIC_BAD)) return { ok: false, reason: "Hero too buzzwordy" };
+  if (containsAny(heroCombined, TOO_VAGUE)) return { ok: false, reason: "Hero too vague" };
+  if (!hasSpecificitySignals(heroCombined)) return { ok: false, reason: "Hero lacks specificity signals" };
+
+  const features = getBlock(blocks, "features");
+  const featureItems = arr(features?.items);
+  if (featureItems.length !== 6) return { ok: false, reason: "Features must be exactly 6" };
+  for (const it of featureItems) {
+    const tt = normalizeWhitespace(it?.title);
+    const d = normalizeWhitespace(it?.description);
+    if (tt.length < 8) return { ok: false, reason: "Feature title too short" };
+    if (d.length < 60) return { ok: false, reason: "Feature description too thin" };
+    if (!/so you can/i.test(d)) return { ok: false, reason: "Feature description missing 'so you can' outcome" };
+    if (containsAny(`${tt} ${d}`, GENERIC_BAD)) return { ok: false, reason: "Features too buzzwordy" };
+    if (containsAny(`${tt} ${d}`, CONSULTING_MEMO_PHRASES)) return { ok: false, reason: "Feature copy looks like a memo" };
+  }
+
+  const stats = getBlock(blocks, "stats");
+  const statsItems = arr(stats?.stats);
+  if (statsItems.length !== 4) return { ok: false, reason: "Stats must be exactly 4" };
+
+  const testimonials = getBlock(blocks, "testimonials");
+  const testimonialItems = arr(testimonials?.items);
+  if (testimonialItems.length !== 3) return { ok: false, reason: "Testimonials must be exactly 3" };
+  for (const t of testimonialItems) {
+    const quote = normalizeWhitespace(t?.quote);
+    const name = normalizeWhitespace(t?.name);
+    const role = normalizeWhitespace(t?.role);
+    if (quote.length < 70) return { ok: false, reason: "Testimonial quote too thin" };
+    if (!name) return { ok: false, reason: "Testimonial missing name" };
+    if (!role) return { ok: false, reason: "Testimonial missing role" };
+    if (
+      !/\d/.test(quote) &&
+      !/(week|weeks|days|hours|export|draft|template|booked|leads|orders|clients|checkout|catalog|portal|case study|portfolio|resume|cv|talk)/i.test(
+        quote
+      )
+    ) {
+      return { ok: false, reason: "Testimonial lacks concrete detail" };
     }
-  }, [view, activeTab, isRunning]);
-
-  // Auto-send pending prompt (after splash selection + after login if needed)
-  useEffect(() => {
-    if (view !== "builder") return;
-    if (!pendingPrompt) return;
-    if (!user) return;
-    if (isRunning) return;
-    if (hasAutoSent) return;
-
-    const t = window.setTimeout(() => {
-      setHasAutoSent(true);
-      internalSend(pendingPrompt);
-    }, 520);
-
-    return () => window.clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, pendingPrompt, user, isRunning, hasAutoSent]);
-
-  async function fetchHistory() {
-    const { data } = await supabase.from("versions").select("*").eq("project_id", projectId).order("version_no", { ascending: false });
-    if (data) setHistory(data);
   }
 
-  async function handleAuth() {
-    const { error } = await supabase.auth.signInWithPassword({ email: loginEmail, password: loginPassword });
-    if (!error) setView("builder");
+  const pricing = getBlock(blocks, "pricing");
+  const plans = arr(pricing?.plans);
+  if (plans.length !== 3) return { ok: false, reason: "Pricing must be exactly 3 plans" };
+  if (plans.filter((p: any) => !!p?.popular).length !== 1) return { ok: false, reason: "Exactly one plan must be popular" };
+  for (const p of plans) {
+    const feats = arr(p?.features);
+    if (feats.length !== 6) return { ok: false, reason: "Each plan must have exactly 6 features" };
   }
 
-  /* -----------------------------
-  ANCHOR:EXPORTS
-  -------------------------------- */
-  function exportWebsiteHTML() {
-    if (!snapshot || !isSiteSnapshot(snapshot)) return;
+  const faq = getBlock(blocks, "faq");
+  const faqItems = arr(faq?.items);
+  if (faqItems.length !== 7) return { ok: false, reason: "FAQ must be exactly 7" };
 
-    const currentPage = snapshot.pages?.find((p: any) => p.slug === activePageSlug) || snapshot.pages?.[0];
-    if (!currentPage) return;
+  const content = getBlock(blocks, "content");
+  const body = safeString(content?.body || content?.content);
+  if (!body || body.length < 220) return { ok: false, reason: "Content body too short" };
+  if (!/<p[\s>]/i.test(body)) return { ok: false, reason: "Content body must include <p>" };
+  if (!/<ul[\s>]/i.test(body) || !/<li[\s>]/i.test(body)) return { ok: false, reason: "Content body must include a bullet list" };
+  if (containsAny(body, CONSULTING_MEMO_PHRASES)) return { ok: false, reason: "Content body looks like a memo" };
 
-    const navItems = snapshot.navigation?.items || ["Home", "Features", "Pricing", "About", "Contact"];
-    const siteName = snapshot.appName || "Your Site";
-    const tagline = snapshot.tagline || "";
+  const cta = getBlock(blocks, "cta");
+  if (normalizeWhitespace(cta?.headline).length < 18) return { ok: false, reason: "CTA headline too short" };
+  if (normalizeWhitespace(cta?.subhead).length < 80) return { ok: false, reason: "CTA subhead too thin" };
+  if (normalizeWhitespace(cta?.buttonLabel).length < 8) return { ok: false, reason: "CTA button label too short" };
 
-    const htmlContent = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${currentPage.title || siteName}</title>
-<script src="https://cdn.tailwindcss.com"></script>
-<style>body{font-family:system-ui,-apple-system,sans-serif;}</style>
-</head>
-<body class="bg-zinc-50 text-zinc-900">
-<nav class="bg-white border-b sticky top-0 z-50 shadow-sm">
-<div class="max-w-7xl mx-auto px-8 h-20 flex items-center justify-between">
-<div class="flex items-center gap-3">
-<div class="font-black text-3xl tracking-tighter">${siteName}</div>
-${tagline ? `<div class="text-sm text-zinc-500 ml-2">${tagline}</div>` : ""}
-</div>
-<div class="flex items-center gap-10 text-sm font-medium">
-${navItems.map((item: any) => `<a href="#" class="hover:text-cyan-700 transition">${item}</a>`).join("")}
-</div>
-<a href="#" class="bg-zinc-900 text-white px-8 py-3 rounded-2xl font-semibold hover:bg-black transition">Get Started</a>
-</div>
-</nav>
-<main>
-${(currentPage.blocks || [])
-  .map((block: any) => {
-    if (block.type === "hero")
-      return `
-<section class="py-32 bg-gradient-to-br from-zinc-900 to-black text-white text-center">
-<div class="max-w-5xl mx-auto px-6">
-<h1 class="text-7xl font-black tracking-[-2px] mb-6">${block.headline || ""}</h1>
-<p class="text-2xl text-zinc-300 max-w-3xl mx-auto">${block.subhead || ""}</p>
-${
-  block.cta
-    ? `<a href="#" class="mt-12 inline-block bg-white text-black px-12 py-4 rounded-3xl font-bold text-lg hover:scale-105 transition">${block.cta.label}</a>`
-    : ""
+  return { ok: true };
 }
-</div>
-</section>`;
-    if (block.type === "features")
-      return `
-<section class="py-28 bg-white">
-<div class="max-w-6xl mx-auto px-6">
-${block.title ? `<h2 class="text-4xl font-semibold text-center mb-16">${block.title}</h2>` : ""}
-<div class="grid grid-cols-1 md:grid-cols-3 gap-8">
-${(block.items || [])
-  .map(
-    (item: any) => `
-<div class="bg-zinc-50 hover:bg-white border border-transparent hover:border-zinc-200 p-10 rounded-3xl transition-all">
-<h3 class="text-2xl font-semibold mb-4">${item.title || ""}</h3>
-<p class="text-zinc-600">${item.description || ""}</p>
-</div>`
-  )
-  .join("")}
-</div>
-</div>
-</section>`;
-    if (block.type === "stats")
-      return `
-<section class="py-20 bg-white border-t border-b">
-<div class="max-w-6xl mx-auto px-6 grid grid-cols-2 md:grid-cols-4 gap-12 text-center">
-${(block.stats || [])
-  .map(
-    (s: any) => `
-<div>
-<div class="text-6xl font-black text-cyan-700">${s.value || ""}</div>
-<div class="text-zinc-600 mt-2 font-medium">${s.label || ""}</div>
-</div>`
-  )
-  .join("")}
-</div>
-</section>`;
-    if (block.type === "testimonials")
-      return `
-<section class="py-28 bg-zinc-50">
-<div class="max-w-6xl mx-auto px-6">
-<h2 class="text-4xl font-semibold text-center mb-16">What our customers say</h2>
-<div class="grid md:grid-cols-3 gap-8">
-${(block.items || [])
-  .map(
-    (t: any) => `
-<div class="bg-white p-10 rounded-3xl border">
-<p class="italic text-lg leading-relaxed">"${t.quote || ""}"</p>
-<div class="mt-8 flex items-center gap-3">
-<div class="w-10 h-10 bg-zinc-200 rounded-full"></div>
-<div>
-<div class="font-semibold">${t.name || ""}</div>
-<div class="text-sm text-zinc-500">${t.role || ""}${t.company ? ` at ${t.company}` : ""}</div>
-</div>
-</div>
-</div>`
-  )
-  .join("")}
-</div>
-</div>
-</section>`;
-    if (block.type === "pricing")
-      return `
-<section class="py-28 bg-white">
-<div class="max-w-6xl mx-auto px-6">
-<h2 class="text-4xl font-semibold text-center mb-16">Simple pricing</h2>
-<div class="grid md:grid-cols-3 gap-8">
-${(block.plans || [])
-  .map(
-    (plan: any) => `
-<div class="${plan.popular ? "ring-2 ring-cyan-500 scale-105" : ""} bg-white border rounded-3xl p-10 transition">
-<h3 class="text-2xl font-semibold">${plan.name || ""}</h3>
-<div class="mt-6 flex items-baseline">
-<span class="text-6xl font-black">${plan.price || ""}</span>
-<span class="ml-2 text-zinc-500">${plan.interval || ""}</span>
-</div>
-<ul class="mt-10 space-y-4">
-${(plan.features || [])
-  .map((f: string) => `<li class="flex items-center gap-3"><span class="text-emerald-600">✔</span> ${f}</li>`)
-  .join("")}
-</ul>
-<a href="#" class="mt-12 block text-center py-4 bg-zinc-900 text-white rounded-2xl font-semibold">${plan.cta || "Get started"}</a>
-</div>`
-  )
-  .join("")}
-</div>
-</div>
-</section>`;
-    if (block.type === "faq")
-      return `
-<section class="py-28 bg-zinc-50">
-<div class="max-w-3xl mx-auto px-6">
-<h2 class="text-4xl font-semibold text-center mb-16">Frequently asked questions</h2>
-${(block.items || [])
-  .map(
-    (item: any) => `
-<details class="group border-b py-6">
-<summary class="flex justify-between items-center font-medium cursor-pointer list-none">
-${item.q || ""}
-<span class="text-xl group-open:rotate-45 transition">+</span>
-</summary>
-<p class="mt-4 text-zinc-600">${item.a || ""}</p>
-</details>`
-  )
-  .join("")}
-</div>
-</section>`;
-    if (block.type === "content")
-      return `
-<section class="py-24 max-w-3xl mx-auto px-6 prose prose-zinc prose-lg">
-${block.title ? `<h2>${block.title}</h2>` : ""}
-<div>${block.body || block.content || ""}</div>
-</section>`;
-    if (block.type === "cta")
-      return `
-<section class="py-28 bg-gradient-to-r from-cyan-700 to-violet-700 text-white text-center">
-<div class="max-w-3xl mx-auto px-6">
-<h2 class="text-5xl font-black tracking-tight">${block.headline || ""}</h2>
-<p class="mt-6 text-xl">${block.subhead || ""}</p>
-${
-  block.buttonLabel
-    ? `<a href="#" class="mt-10 inline-block bg-white text-black px-12 py-4 rounded-3xl font-bold text-lg">${block.buttonLabel}</a>`
-    : ""
-}
-</div>
-</section>`;
-    return "";
-  })
-  .join("")}
-</main>
-<footer class="bg-zinc-950 text-zinc-400 py-20">
-<div class="max-w-7xl mx-auto px-8 grid grid-cols-2 md:grid-cols-4 gap-10">
-<div>
-<div class="font-black text-white text-3xl tracking-tighter">${siteName}</div>
-${tagline ? `<p class="mt-2">${tagline}</p>` : ""}
-</div>
-<div>
-<div class="font-semibold text-white mb-4">Product</div>
-<div class="space-y-3 text-sm">${navItems.map((i: any) => `<div>${i}</div>`).join("")}</div>
-</div>
-<div>
-<div class="font-semibold text-white mb-4">Company</div>
-<div class="space-y-3 text-sm"><div>About</div><div>Blog</div><div>Careers</div></div>
-</div>
-<div>
-<div class="font-semibold text-white mb-4">Legal</div>
-<div class="space-y-3 text-sm"><div>Privacy</div><div>Terms</div></div>
-</div>
-</div>
-<div class="text-center text-xs mt-20 opacity-60">© ${new Date().getFullYear()} ${siteName} • Built instantly with Buildlio</div>
-</footer>
-</body>
-</html>`;
 
-    const blob = new Blob([htmlContent], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${currentPage.slug || "index"}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
+function validateDocumentBuild(parsed: any): { ok: boolean; reason?: string } {
+  if (parsed?.type !== "build") return { ok: false, reason: "Not a build response" };
+
+  // Hard blocks: memo/spec
+  if (snapshotLooksLikeMemo(parsed)) return { ok: false, reason: "Output looks like a memo (must generate document HTML)" };
+  if (looksLikeAgentSpec(parsed)) return { ok: false, reason: "Output resembles an agent/spec document (must generate document HTML)" };
+
+  // Shape gate
+  const sg = shapeGate(parsed, "document");
+  if (!sg.ok) return sg;
+
+  const snap = parsed?.snapshot;
+  if (!snap) return { ok: false, reason: "Missing snapshot" };
+
+  // HARD-GATE: document builds must not include pages
+  if (Array.isArray((snap as any)?.pages) && (snap as any).pages.length > 0) {
+    return { ok: false, reason: "Document build must not include snapshot.pages" };
   }
 
-  function exportDocumentHTML() {
-    if (!snapshot || !isDocSnapshot(snapshot)) return;
+  if (!isNonEmptyString((snap as any).appName)) return { ok: false, reason: "Missing appName" };
 
-    const docs = snapshot.documents || [];
-    const active = docs.find((d: any) => d.id === activeDocId) || docs[0];
-    if (!active) return;
+  const docs = arr((snap as any).documents);
+  if (docs.length < 1) return { ok: false, reason: "Missing documents[]" };
 
-    const title = active.title || "document";
-    const safeName =
-      title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "").slice(0, 64) || "document";
+  for (const d of docs) {
+    if (!isNonEmptyString(d?.id)) return { ok: false, reason: "Document missing id" };
+    if (!isNonEmptyString(d?.title)) return { ok: false, reason: "Document missing title" };
+    if (!isNonEmptyString(d?.category)) return { ok: false, reason: "Document missing category" };
+    if (d?.format !== "html") return { ok: false, reason: "Document format must be 'html'" };
 
-    const htmlContent = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${title}</title>
-<style>
-  body{font-family:ui-serif, Georgia, Cambria, "Times New Roman", Times, serif; color:#111; background:#f3f4f6; margin:0;}
-  .paper{max-width:900px;margin:40px auto;background:#fff;border:1px solid #e5e7eb;border-radius:18px;box-shadow:0 20px 60px rgba(0,0,0,.12);overflow:hidden;}
-  .head{padding:28px 40px;background:#f9fafb;border-bottom:1px solid #e5e7eb;}
-  .head h1{margin:0;font-size:22px;line-height:1.2;}
-  .meta{margin-top:8px;font-size:12px;color:#4b5563;}
-  .body{padding:34px 40px;}
-  h1,h2,h3{font-family:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;}
-  h2{margin-top:26px}
-  p{line-height:1.6}
-</style>
-</head>
-<body>
-<div class="paper">
-  <div class="head">
-    <h1>${title}</h1>
-    <div class="meta">${active.jurisdiction ? `Jurisdiction: ${active.jurisdiction} • ` : ""}Category: ${active.category}</div>
-  </div>
-  <div class="body">
-    ${active.body_html || ""}
-  </div>
-</div>
-</body>
-</html>`;
+    const body = safeString(d?.body_html);
+    if (body.length < 600) return { ok: false, reason: "Document body too short" };
+    if (!/<p[\s>]/i.test(body)) return { ok: false, reason: "Document must include <p>" };
 
-    const blob = new Blob([htmlContent], { type: "text/html" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${safeName}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
+    const hasHeading = /<h1[\s>]|<h2[\s>]/i.test(body);
+    const hasSections = /<h2[\s>]|<h3[\s>]/i.test(body);
+    if (!hasHeading || !hasSections) return { ok: false, reason: "Document needs headings/sections" };
 
-  function exportCurrent() {
-    if (buildType === "document") exportDocumentHTML();
-    else exportWebsiteHTML();
-  }
-
-  /* -----------------------------
-  INTERNAL send
-  -------------------------------- */
-  async function internalSend(text: string) {
-    if (!text.trim() || isRunning) return;
-
-    if (creditBalance <= 0) {
-      setMessages((prev) => [...prev, { role: "assistant", content: "⚠️ Out of credits. Please upgrade to keep building." }]);
-      return;
+    if (!/(not legal advice|attorney|counsel|jurisdiction)/i.test(body)) {
+      return { ok: false, reason: "Document missing a legal/disclaimer signal" };
     }
 
-    const userMessage = text.trim();
-    const newMessages = [...messages, { role: "user" as const, content: userMessage }];
-    setMessages(newMessages);
+    if (containsAny(body, CONSULTING_MEMO_PHRASES)) return { ok: false, reason: "Document body looks like a memo" };
+  }
 
-    setIsRunning(true);
-    setBuildLogs([]);
-    setActiveTab("console");
+  return { ok: true };
+}
 
-    const addLogWithDelay = async (msg: string, type: LogEntry["type"] = "info", delayMs = 620) => {
-      await sleep(delayMs);
-      addLog(msg, type);
-    };
+function validateBuildResponse(parsed: any, buildType: BuildType): { ok: boolean; reason?: string } {
+  // Shape gate first
+  const sg = shapeGate(parsed, buildType);
+  if (!sg.ok) return sg;
 
-    try {
-      await addLogWithDelay("Analyzing your request…", "info");
-      await addLogWithDelay("Planning structure and output…", "info");
-      await addLogWithDelay(buildType === "document" ? "Drafting your document…" : "Writing premium copy and sections…", "info");
+  if (parsed.type === "chat") {
+    const msg = normalizeWhitespace(parsed.message);
+    if (msg.length < 20) return { ok: false, reason: "Chat message too short" };
+    if (containsAny(msg, CONSULTING_MEMO_PHRASES)) return { ok: false, reason: "Chat reply looks like a memo (ask only 1–2 questions)" };
+    if (looksLikeAgentSpec(parsed)) return { ok: false, reason: "Chat reply resembles an agent/spec (ask only 1–2 questions)" };
+    return { ok: true };
+  }
 
-      let currentPid = projectId;
-      if (!currentPid) {
-        if (!user) throw new Error("Please log in first.");
+  if (buildType === "document") return validateDocumentBuild(parsed);
+  return validateWebsiteBuild(parsed);
+}
 
-        const { data: proj, error: projError } = await supabase
-          .from("projects")
-          .insert({ owner_id: user.id, name: "Professional Build", slug: `pro-${Date.now()}` })
-          .select("id")
-          .single();
+/* -----------------------------
+ANCHOR:PROMPTS
+-------------------------------- */
+function buildCreativeBrief(
+  messages: any[],
+  buildType: BuildType,
+  opts: {
+    splashChoice?: SplashChoice | null;
+    buildConsoleMode?: BuildConsoleMode | null;
+    documentCategory?: DocumentItem["category"] | null;
+    jurisdiction?: string | null;
+  }
+) {
+  const lastUser = [...(messages || [])].reverse().find((m) => m?.role === "user");
+  const userText = safeString(lastUser?.content).slice(0, 2500);
 
-        if (projError || !proj?.id) throw new Error(projError?.message || "Could not create project.");
+  const typeGuidance: Record<BuildType, string> = {
+    landing_page:
+      "Landing page: ONE goal. Make it feel premium and high-trust. Strong CTA, tight copy, minimal nav. Still produce the required blocks.",
+    website:
+      "Website: a polished multi-section marketing site. Must feel ultra high-tech, human, helpful, and export-ready. No strategy memos — only page blocks.",
+    application:
+      "Application: speak in workflows, roles, dashboards, operational clarity, security posture. Still produce blocks and keep it conversion-friendly.",
+    document:
+      "Document: draft a real professional document in HTML. No website. Output snapshot.documents[] only. Include clear headings, placeholders, and not-legal-advice disclaimer.",
+    store:
+      "Store: ecommerce confidence: catalog, products, cart/checkout, shipping/returns clarity, trust signals. Still produce required blocks.",
+    other:
+      "Other: infer responsibly, still output a premium snapshot with concrete deliverables and exportable structure.",
+  };
 
-        currentPid = proj.id;
-        setProjectId(currentPid);
+  const splashLine =
+    opts.splashChoice || opts.buildConsoleMode
+      ? `- Vision Splash Flow hints: splashChoice=${opts.splashChoice || "n/a"}, buildConsoleMode=${opts.buildConsoleMode || "n/a"}`
+      : "";
+
+  const docChooserLine =
+    buildType === "document" && (opts.documentCategory || opts.jurisdiction)
+      ? `- Document chooser: category=${opts.documentCategory || "n/a"}, jurisdiction=${opts.jurisdiction || "n/a"}`
+      : "";
+
+  return `
+CREATIVE BRIEF (BUILDER MODE — OUTPUT ARTIFACTS, NOT A MEMO)
+- Build type: ${buildType}
+- Type guidance: ${typeGuidance[buildType]}
+${splashLine}
+${docChooserLine}
+- User request (may include 'TYPE:' tag): ${userText || "Not specified — infer responsibly and ask 1–2 questions only if absolutely necessary."}
+
+STYLE & FEEL (ULTRA HIGH-TECH, FRIENDLY, THOROUGH)
+- Aesthetic: refined minimalism + high-tech precision. Clean white/neutral base, one strong accent, crisp hierarchy.
+- Voice: confident, kind, helpful, detail-oriented. Short sentences when needed. No fluff.
+- Depth: thorough in content, but expressed inside blocks (not a giant strategy doc).
+- Trust: realistic, grounded. No fake brands/awards. Avoid guarantees.
+
+HARD CONSTRAINTS (NON-NEGOTIABLE)
+- Do NOT output architecture/performance/timeline/stack recommendations.
+- Do NOT include headings like “Performance Targets”, “Technical Stack”, “Estimated Timeline”, “Information Architecture”.
+- Do NOT output agent specs (missions/tools/guardrails/escalation triggers).
+- Produce BUILD ARTIFACTS ONLY:
+  * Non-document: snapshot.pages[] with required blocks.
+  * Document: snapshot.documents[] only.
+- Make deliverables explicit: export, ownership, what user receives.
+
+COPY RULES
+- No buzzword soup. Avoid: ${GENERIC_BAD.join(", ")}.
+- Be concrete: audience, outcomes, scope, deliverables, next steps.
+`.trim();
+}
+
+function buildSystemPrompt(
+  brief: string,
+  buildType: BuildType,
+  opts: { documentCategory?: DocumentItem["category"] | null; jurisdiction?: string | null }
+) {
+  if (buildType === "document") {
+    const docNudge =
+      opts.documentCategory || opts.jurisdiction
+        ? `\nDOCUMENT TARGETING:\n- The user selected category="${opts.documentCategory || "n/a"}" and jurisdiction="${opts.jurisdiction || "n/a"}".\n- Draft the correct document immediately. Avoid questions unless truly necessary.\n`
+        : "";
+
+    return `
+You are Buildlio — an ultra high-trust, professional document generator.
+You do NOT write strategy. You generate export-ready artifacts.
+
+ABSOLUTE OUTPUT RULES:
+- Output ONLY a SINGLE valid JSON object.
+- No markdown, no backticks, no commentary.
+- Must be strict JSON (double quotes only).
+
+BANNED CONTENT (FAIL THE BUILD):
+- Any mention of: "Estimated Timeline", "Technical Stack Recommendation", "Performance Targets", "Information Architecture", "Core Web Vitals", "Lighthouse".
+- Any agent spec headings like: "PRIMARY MISSION", "AVAILABLE TOOLS", "GUARDRAILS", "ESCALATION TRIGGERS".
+- Any YAML/code fences or markdown headings.
+
+RESPONSE TYPES:
+1) Rare: need one missing detail
+{ "type": "chat", "message": "Warm, helpful. Ask 1–2 laser-focused questions. Nothing else." }
+
+2) Default: build now
+{
+  "type": "build",
+  "message": "Your document draft is ready to export.",
+  "snapshot": {
+    "appName": "Buildlio Documents",
+    "meta": { "buildType": "document", "intent": "one sentence intent" },
+    "documents": [
+      {
+        "id": "doc_1",
+        "title": "…",
+        "category": "…",
+        "jurisdiction": "…",
+        "format": "html",
+        "body_html": "<h1>…</h1><p>…</p><h2>…</h2>…",
+        "fields": [{"key":"sender_name","label":"Sender Name","type":"text","required":true}],
+        "warnings": ["Not legal advice. Consider attorney review for your jurisdiction."]
       }
+    ]
+  }
+}
 
-      await addLogWithDelay("Consulting the architect…", "info");
+DOCUMENT RULES (NON-NEGOTIABLE):
+- Do NOT output snapshot.pages.
+- body_html MUST include: <h1>, multiple <h2>/<h3>, many <p>, placeholders like [Name], [Address], [Date].
+- Must include a short “Not legal advice” section. Encourage counsel review where appropriate.
+- Tone: professional, calm, firm. Never illegal instructions. Never claim you are a lawyer.
 
-      const res = await fetch("/api/claude-test", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: currentPid, buildType, messages: newMessages }),
+DECISION RULE:
+- If the user gave ANY usable context, build immediately.
+- Only ask questions if no usable context exists at all.
+${docNudge}
+${brief}
+`.trim();
+  }
+
+  return `
+You are Buildlio — an ultra high-tech website generator.
+You do NOT write strategy or architecture docs. You generate exportable page blocks.
+
+ABSOLUTE OUTPUT RULES:
+- Output ONLY a SINGLE valid JSON object.
+- No markdown, no backticks, no commentary.
+- Must be strict JSON (double quotes only).
+
+BANNED CONTENT (FAIL THE BUILD):
+- Any mention of: "Estimated Timeline", "Technical Stack Recommendation", "Performance Targets", "Information Architecture", "Core Web Vitals", "Lighthouse".
+- Any "Would you like me to elaborate" style closing.
+- Any agent specs (missions/tools/guardrails/escalation triggers) or YAML/code fences.
+
+RESPONSE TYPES:
+1) Rare: need one missing detail
+{ "type": "chat", "message": "Warm, helpful. Ask 1–2 laser-focused questions. Nothing else." }
+
+2) Default: build now
+{
+  "type": "build",
+  "message": "Your premium snapshot is ready to export.",
+  "snapshot": {
+    "appName": "Brand Name",
+    "tagline": "Short, punchy, specific tagline",
+    "meta": { "buildType": "website", "intent": "one sentence intent" },
+    "navigation": { "items": ["Home", "Work", "About", "Resume", "Contact"] },
+    "pages": [
+      {
+        "slug": "index",
+        "title": "Home",
+        "blocks": [
+          { "type": "hero", "headline": "...", "subhead": "...", "cta": { "label": "..." } },
+          { "type": "features", "title": "...", "items": [{"title":"...","description":"..."}] },
+          { "type": "stats", "stats": [{"label":"...","value":"..."}] },
+          { "type": "testimonials", "items": [{"quote":"...","name":"...","role":"...","company":"..."}] },
+          { "type": "pricing", "plans": [{"name":"...","price":"...","interval":"mo","popular":true,"features":["..."],"cta":"..."}] },
+          { "type": "faq", "items": [{"q":"...","a":"..."}] },
+          { "type": "content", "title":"...", "body":"<p>...</p>...<ul><li>...</li></ul>" },
+          { "type": "cta", "headline":"...", "subhead":"...", "buttonLabel":"..." }
+        ]
+      }
+    ]
+  }
+}
+
+NON-NEGOTIABLE STRUCTURE:
+- The INDEX page MUST contain these blocks exactly once each:
+  hero, features, stats, testimonials, pricing, faq, content, cta
+- Exact counts:
+  * features.items: EXACTLY 6
+  * stats.stats: EXACTLY 4
+  * testimonials.items: EXACTLY 3
+  * pricing.plans: EXACTLY 3 (EXACTLY ONE popular=true)
+  * each pricing plan features: EXACTLY 6 bullets
+  * faq.items: EXACTLY 7
+
+BUILD-TYPE BEHAVIOR:
+- landing_page: nav minimal; still keep required blocks.
+- store: nav names adapted for ecommerce; keep required blocks.
+- application: nav names adapted for portal/app; keep required blocks.
+- website: feel like a premium modern agency build; thorough, helpful, export-ready.
+
+STYLE TARGET:
+- Ultra high-tech refined minimalism. Precise wording. Friendly and thorough.
+- No strategy sections — all substance must live inside blocks.
+
+${brief}
+`.trim();
+}
+
+function buildPolishInstruction(messages: any[], reason: string, buildType: BuildType) {
+  const lastUser = [...(messages || [])].reverse().find((m) => m?.role === "user");
+  const ctx = safeString(lastUser?.content).slice(0, 1800);
+
+  return `
+POLISH PASS — REBUILD AS ARTIFACTS (NOT A MEMO)
+Failure reason: ${reason}
+Build type: ${buildType}
+
+DO THIS:
+- Rebuild from scratch.
+- Output strict JSON only (no markdown, no backticks).
+- If non-document: output snapshot.pages ONLY (no documents).
+- If document: output snapshot.documents ONLY (no pages).
+- Do NOT include any strategy headings or recommendations.
+- Do NOT produce agent specs (missions/tools/guardrails/escalation triggers).
+
+BANNED PHRASES:
+${CONSULTING_MEMO_PHRASES.map((x) => `- ${x}`).join("\n")}
+
+USER CONTEXT:
+${ctx}
+`.trim();
+}
+
+/* -----------------------------
+ANCHOR:POST
+-------------------------------- */
+export async function POST(req: Request) {
+  try {
+    const body = await req.json();
+
+    const projectId = String(body.projectId || "");
+    const messages = body.messages || [];
+
+    const splashChoice = canonicalizeSplashChoice(body.splashChoice) || null;
+    const buildConsoleMode = canonicalizeBuildConsoleMode(body.buildConsoleMode) || null;
+
+    const documentCategory = canonicalizeDocumentCategory(body.documentCategory) || null;
+    const jurisdiction = isNonEmptyString(body.jurisdiction) ? String(body.jurisdiction).trim() : null;
+
+    const explicitType = canonicalizeBuildType(body.buildType);
+    const detected = detectBuildTypeFromText(messages);
+    const buildType: BuildType = explicitType || detected || "website";
+
+    const cookieStore = await cookies();
+
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL || "",
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "",
+      { cookies: { getAll: () => cookieStore.getAll(), setAll: () => {} } }
+    );
+
+    const { data: authData } = await supabase.auth.getUser();
+    if (!authData?.user) {
+      return NextResponse.json({ success: false, error: "Unauthorized" }, { status: 401 });
+    }
+
+    const brief = buildCreativeBrief(messages, buildType, {
+      splashChoice,
+      buildConsoleMode,
+      documentCategory,
+      jurisdiction,
+    });
+
+    const systemPrompt = buildSystemPrompt(brief, buildType, { documentCategory, jurisdiction });
+
+    async function runClaude(callMessages: any[]) {
+      const aiResponse = await anthropic.messages.create({
+        model: "claude-sonnet-4-6",
+        max_tokens: 11000,
+        temperature: 0.62,
+        system: systemPrompt,
+        messages: callMessages,
       });
 
-      const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || "Server error");
+      let rawOutput = "{}";
+      const textBlocks = (aiResponse as any).content?.filter((b: any) => b.type === "text") || [];
+      if (textBlocks.length > 0) rawOutput = textBlocks.map((b: any) => b.text).join("\n");
 
-      const aiResponse = data.data;
+      const extracted = extractJson(rawOutput);
 
-      await addLogWithDelay("Rendering output…", "info");
-      await addLogWithDelay("Final polish…", "info");
+      let parsed: BuildlioResponse;
+      try {
+        parsed = JSON.parse(extracted);
+      } catch (e) {
+        console.error("JSON Parse Error:", extracted);
+        throw new Error("AI returned malformed JSON. Please try again.");
+      }
 
-      setMessages((prev) => [...prev, { role: "assistant", content: aiResponse.message }]);
+      // Ensure meta.buildType exists (and aligns to the route's chosen buildType)
+      if ((parsed as any)?.type === "build" && (parsed as any)?.snapshot) {
+        (parsed as any).snapshot.meta = (parsed as any).snapshot.meta || {};
+        (parsed as any).snapshot.meta.buildType = (parsed as any).snapshot.meta.buildType || buildType;
 
-      if (aiResponse.type === "build" && aiResponse.snapshot) {
-        const nextSnap: AnySnapshot = aiResponse.snapshot;
-        setSnapshot(nextSnap);
+        // Preserve Vision Splash Flow + chooser hints in meta (non-breaking)
+        if (splashChoice) (parsed as any).snapshot.meta.splashChoice = (parsed as any).snapshot.meta.splashChoice || splashChoice;
+        if (buildConsoleMode) (parsed as any).snapshot.meta.buildConsoleMode = (parsed as any).snapshot.meta.buildConsoleMode || buildConsoleMode;
 
-        if (isDocSnapshot(nextSnap)) {
-          const first = nextSnap.documents?.[0]?.id || "doc_1";
-          setActiveDocId(first);
-        } else if (isSiteSnapshot(nextSnap)) {
-          const firstPage = nextSnap.pages?.[0]?.slug || "index";
-          setActivePageSlug(firstPage);
+        if (buildType === "document") {
+          if (documentCategory) (parsed as any).snapshot.meta.documentCategory = (parsed as any).snapshot.meta.documentCategory || documentCategory;
+          if (jurisdiction) (parsed as any).snapshot.meta.jurisdiction = (parsed as any).snapshot.meta.jurisdiction || jurisdiction;
         }
 
-        setCreditBalance((prev) => prev - 1);
-        fetchHistory();
-        await addLogWithDelay(buildType === "document" ? "Done. Your document draft is ready." : "Done. Your full professional site is ready.", "success", 760);
+        (parsed as any).snapshot.meta.intent =
+          (parsed as any).snapshot.meta.intent ||
+          `Buildlio ${buildType} generation${splashChoice ? ` (${splashChoice})` : ""}${buildConsoleMode ? ` [${buildConsoleMode}]` : ""}`;
       }
-    } catch (err: any) {
-      const errMsg = `❌ ${err.message}`;
-      setMessages((prev) => [...prev, { role: "assistant", content: errMsg }]);
-      addLog(errMsg, "error");
-    } finally {
-      setIsRunning(false);
-      window.setTimeout(() => setActiveTab("chat"), 1200);
+
+      return parsed;
     }
+
+    // Attempt 1
+    let parsedResponse = await runClaude(messages);
+    let validation = validateBuildResponse(parsedResponse, buildType);
+
+    // Attempt 2 (polish pass)
+    if (!validation.ok) {
+      const polish = buildPolishInstruction(messages, validation.reason || "Unknown", buildType);
+      const retryMessages = [...messages, { role: "user", content: polish }];
+      parsedResponse = await runClaude(retryMessages);
+      validation = validateBuildResponse(parsedResponse, buildType);
+    }
+
+    // Still failing: minimal question
+    if (!validation.ok) {
+      const fallback: BuildlioResponse = {
+        type: "chat",
+        message:
+          buildType === "document"
+            ? "One quick detail so I can generate the correct draft: what document category (letter/contract/policy/etc.) and what jurisdiction/state? If you want, paste any key names/dates in one line."
+            : "One quick detail so I can generate the right snapshot: what are you building (TYPE: website / landing_page / store / application) and who is it for? One sentence is perfect.",
+      };
+      return NextResponse.json({ success: true, data: fallback });
+    }
+
+    // Save & charge only on build
+    if (parsedResponse.type === "build" && (parsedResponse as any).snapshot) {
+      const noteParts = [`Professional Build v5.6 (${buildType})`];
+      if (splashChoice) noteParts.push(`splash:${splashChoice}`);
+      if (buildConsoleMode) noteParts.push(`console:${buildConsoleMode}`);
+      if (buildType === "document" && documentCategory) noteParts.push(`doc:${documentCategory}`);
+      if (buildType === "document" && jurisdiction) noteParts.push(`jur:${jurisdiction}`);
+
+      const { error: rpcError } = await supabase.rpc("save_version_and_charge_credit", {
+        p_project_id: projectId,
+        p_owner_id: authData.user.id,
+        p_snapshot: (parsedResponse as any).snapshot,
+        p_note: noteParts.join(" • "),
+        p_model: "claude-sonnet-4-6",
+      });
+
+      if (rpcError) {
+        console.error("DB error:", rpcError);
+        return NextResponse.json({ success: false, error: "Failed to save version" }, { status: 500 });
+      }
+    }
+
+    return NextResponse.json({ success: true, data: parsedResponse });
+  } catch (err: unknown) {
+    console.error("API Error:", err);
+    const errorMessage = err instanceof Error ? err.message : "Internal server error";
+    return NextResponse.json({ success: false, error: errorMessage }, { status: 500 });
   }
-
-  async function sendMessage() {
-    const text = chatInput;
-    setChatInput("");
-    await internalSend(text);
-  }
-
-  return (
-    <div className={`${inter.variable} ${fira.variable} h-screen flex flex-col bg-white text-zinc-900 overflow-hidden`}>
-      {showSplash && (
-        <BuildlioSplash
-          onSelect={(choice) => {
-            const bt = choiceToBuildType(choice);
-            setFirstChoice(choice);
-            setBuildType(bt);
-            setPendingPrompt(makePromptForChoice(choice));
-            setHasAutoSent(false);
-            setShowSplash(false);
-
-            setTimeout(() => {
-              if (user) setView("builder");
-              else setView("auth");
-            }, 360);
-          }}
-        />
-      )}
-
-      <TopNav
-        view={view}
-        setView={setView}
-        user={user}
-        creditBalance={creditBalance}
-        userEmail={user?.email}
-        onSignOut={() => supabase.auth.signOut()}
-      />
-
-      <main className="flex-1 flex overflow-hidden">
-        {view === "landing" && (
-          <div className="flex-1 flex items-center justify-center bg-white">
-            <div className="text-center max-w-3xl px-6">
-              <div className="mb-8 inline-flex items-center gap-4">
-                <div className="text-8xl">⬡</div>
-              </div>
-              <h1 className="text-7xl font-black tracking-[-3.5px] leading-[1.05] mb-6 text-zinc-900">
-                Prompt.
-                <br />
-                Build.
-                <br />
-                <span className="bg-gradient-to-r from-cyan-700 via-violet-700 to-fuchsia-700 bg-clip-text text-transparent">
-                  Ship professional output.
-                </span>
-              </h1>
-              <p className="text-2xl text-zinc-600 mb-12">Websites, landing pages, stores, apps — and real documents — generated instantly.</p>
-              <button
-                onClick={() => (user ? setView("builder") : setView("auth"))}
-                className="px-14 py-6 bg-zinc-900 text-white rounded-3xl font-black text-2xl hover:scale-105 active:scale-95 transition"
-              >
-                Start building free
-              </button>
-            </div>
-          </div>
-        )}
-
-        {view === "auth" && (
-          <div className="flex-1 flex items-center justify-center bg-zinc-50">
-            <div className="w-full max-w-md bg-white border border-zinc-200 p-12 rounded-3xl shadow-xl">
-              <h2 className="text-3xl font-black mb-6 text-zinc-900">Welcome back</h2>
-
-              {firstChoice && (
-                <div className="mb-6 rounded-2xl border border-zinc-200 bg-zinc-50 px-5 py-4 text-sm text-zinc-700">
-                  <div className="text-[10px] uppercase tracking-[0.2em] text-zinc-500 mb-1">Selected</div>
-                  <div className="font-semibold">
-                    {firstChoice} <span className="text-zinc-400">•</span> <span className="text-zinc-600">{buildType}</span>
-                  </div>
-                </div>
-              )}
-
-              <input
-                type="email"
-                placeholder="you@company.com"
-                className="w-full mb-4 bg-white border border-zinc-200 rounded-2xl p-5 focus:border-cyan-600 outline-none"
-                value={loginEmail}
-                onChange={(e) => setLoginEmail(e.target.value)}
-              />
-              <input
-                type="password"
-                placeholder="Password"
-                className="w-full mb-8 bg-white border border-zinc-200 rounded-2xl p-5 focus:border-cyan-600 outline-none"
-                value={loginPassword}
-                onChange={(e) => setLoginPassword(e.target.value)}
-              />
-              <button onClick={handleAuth} className="w-full py-5 bg-zinc-900 text-white font-bold rounded-2xl hover:bg-black transition">
-                Sign in
-              </button>
-            </div>
-          </div>
-        )}
-
-        {view === "builder" && (
-          <div className="flex h-full w-full bg-zinc-50">
-            <aside className="w-96 border-r border-zinc-200 bg-white flex flex-col">
-              <div className="flex border-b border-zinc-200">
-                {(["chat", "console", "history"] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`flex-1 py-4 text-sm font-medium transition-all ${
-                      activeTab === tab ? "text-zinc-900 border-b-2 border-cyan-600" : "text-zinc-500 hover:text-zinc-900"
-                    }`}
-                  >
-                    {tab.charAt(0).toUpperCase() + tab.slice(1)}
-                  </button>
-                ))}
-              </div>
-
-              {activeTab === "chat" && (
-                <>
-                  <div className="flex-1 overflow-y-auto p-6 space-y-7 bg-white">
-                    {messages.map((msg: any, i: number) => (
-                      <div key={i} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
-                        <div
-                          className={`max-w-[85%] rounded-3xl px-6 py-4 text-[15px] leading-relaxed ${
-                            msg.role === "user"
-                              ? "bg-cyan-700 text-white"
-                              : "bg-zinc-50 border border-zinc-200 text-zinc-900"
-                          }`}
-                        >
-                          {msg.role === "assistant" && (
-                            <div className="uppercase text-[10px] tracking-[2px] text-cyan-700 mb-2 font-mono">BUILDLIO</div>
-                          )}
-                          {msg.content}
-                        </div>
-                      </div>
-                    ))}
-                    {isRunning && (
-                      <div className="flex justify-start">
-                        <div className="bg-zinc-50 border border-zinc-200 rounded-3xl px-6 py-4 flex items-center gap-3 text-sm text-zinc-600">
-                          <div className="flex gap-1.5">
-                            <div className="w-1.5 h-1.5 bg-cyan-600 rounded-full animate-bounce" />
-                            <div className="w-1.5 h-1.5 bg-cyan-600 rounded-full animate-bounce delay-150" />
-                            <div className="w-1.5 h-1.5 bg-cyan-600 rounded-full animate-bounce delay-300" />
-                          </div>
-                          {buildType === "document" ? "Drafting your document…" : "Building your site…"}
-                        </div>
-                      </div>
-                    )}
-                    <div ref={messagesEndRef} />
-                  </div>
-
-                  <div className="p-6 border-t border-zinc-200 bg-white">
-                    <div className="relative">
-                      <input
-                        ref={chatInputRef}
-                        value={chatInput}
-                        onChange={(e) => setChatInput(e.target.value)}
-                        onKeyDown={(e) => e.key === "Enter" && !isRunning && sendMessage()}
-                        placeholder={buildType === "document" ? "Tell me what document you need…" : "Tell me what you want to build…"}
-                        className="w-full bg-white border border-zinc-200 focus:border-cyan-600 rounded-3xl pl-7 pr-16 py-5 text-sm outline-none"
-                        disabled={isRunning}
-                      />
-                      <button
-                        onClick={sendMessage}
-                        disabled={isRunning || !chatInput.trim()}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 bg-gradient-to-br from-cyan-600 to-violet-700 w-11 h-11 rounded-2xl flex items-center justify-center disabled:opacity-40 hover:scale-110 transition text-white"
-                        aria-label="Send"
-                      >
-                        ↑
-                      </button>
-                    </div>
-                    <p className="text-center text-[10px] text-zinc-500 mt-4">
-                      {buildType === "document" ? "Buildlio will generate a document draft when ready" : "Buildlio will generate a complete site when ready"}
-                    </p>
-                  </div>
-                </>
-              )}
-
-              {activeTab === "console" && (
-                <div className="flex-1 overflow-y-auto p-6 font-mono text-xs bg-white text-zinc-800 space-y-3">
-                  <div className="sticky top-0 bg-white pb-4 z-10">
-                    <div className="text-[10px] uppercase tracking-[0.22em] text-zinc-500">Build Console</div>
-                    <div className="mt-1 text-xs text-zinc-600">Clean, readable output — designed for real work.</div>
-                    <div className="mt-4 h-px bg-zinc-200" />
-                  </div>
-
-                  {buildLogs.length === 0 ? (
-                    <div className="text-center py-16 text-zinc-500">When you build, activity will appear here.</div>
-                  ) : (
-                    buildLogs.map((log: any, i: number) => (
-                      <div key={i} className="flex gap-3 leading-relaxed">
-                        <span className="text-zinc-400 shrink-0 w-[92px]">{log.timestamp}</span>
-                        <span className="text-zinc-500 shrink-0">buildlio&gt;</span>
-                        <span
-                          className={
-                            log.type === "success" ? "text-emerald-700" : log.type === "error" ? "text-red-600" : "text-zinc-800"
-                          }
-                        >
-                          {log.message}
-                        </span>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-
-              {activeTab === "history" && (
-                <div className="flex-1 overflow-y-auto p-6 bg-white">
-                  <div className="text-xs uppercase tracking-widest text-zinc-500 mb-6">Version History</div>
-                  {history.length === 0 ? (
-                    <p className="text-zinc-500">No versions yet. Build your first one!</p>
-                  ) : (
-                    history.map((v: any, i: number) => (
-                      <div key={i} className="mb-4 bg-zinc-50 border border-zinc-200 rounded-3xl p-5 text-sm">
-                        <div className="flex justify-between text-xs">
-                          <span>Version {v.version_no}</span>
-                          <span className="text-zinc-500">{new Date(v.created_at).toLocaleDateString()}</span>
-                        </div>
-                        <div className="mt-2 text-emerald-700 text-xs">Ready to export</div>
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-            </aside>
-
-            <div className="flex-1 flex flex-col">
-              {/* Top bar: Website pages OR Document export */}
-              <div className="h-14 border-b border-zinc-200 bg-white flex items-center px-6 gap-2 overflow-x-auto">
-                {buildType !== "document" && isSiteSnapshot(snapshot) && (
-                  <>
-                    {snapshot?.pages?.map((p: any) => (
-                      <button
-                        key={p.slug}
-                        onClick={() => setActivePageSlug(p.slug)}
-                        className={`px-6 py-2 text-sm rounded-2xl transition whitespace-nowrap border ${
-                          activePageSlug === p.slug
-                            ? "bg-zinc-900 text-white border-zinc-900 font-semibold"
-                            : "bg-white hover:bg-zinc-50 text-zinc-700 border-zinc-200"
-                        }`}
-                      >
-                        {p.title || (p.slug === "index" ? "Home" : p.slug.charAt(0).toUpperCase() + p.slug.slice(1))}
-                      </button>
-                    ))}
-                  </>
-                )}
-
-                <div className="flex-1" />
-
-                <button
-                  onClick={exportCurrent}
-                  disabled={!snapshot}
-                  className="flex items-center gap-2 px-7 py-2.5 bg-zinc-900 hover:bg-black rounded-2xl text-sm font-medium disabled:opacity-40 transition text-white"
-                >
-                  {buildType === "document" ? "Export Document" : "Export Full HTML"}
-                </button>
-              </div>
-
-              {/* Renderer switch */}
-              {buildType === "document" ? (
-                <DocumentPreview
-                  snapshot={isDocSnapshot(snapshot) ? snapshot : null}
-                  activeDocId={activeDocId}
-                  onSelectDoc={(id: any) => setActiveDocId(id)}
-                />
-              ) : (
-                <SitePreview snapshot={isSiteSnapshot(snapshot) ? snapshot : null} activePageSlug={activePageSlug} />
-              )}
-            </div>
-          </div>
-        )}
-      </main>
-    </div>
-  );
 }
