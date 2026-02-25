@@ -20,17 +20,6 @@ const shareTechMono = Share_Tech_Mono({
 });
 
 /* ─────────────────────── TYPES ─────────────────────── */
-type Particle = {
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  r: number;
-  alpha: number;
-  hue: number;
-  type: "node" | "spark";
-};
-
 type BuildType = "website" | "agent" | "store" | "document" | "app" | "other";
 type Stage = "root" | "documentKind" | "websiteKind" | "agentKind" | "storeKind" | "appKind";
 type KindStage = Exclude<Stage, "root">;
@@ -43,47 +32,9 @@ type Card = {
   next?: Stage;
 };
 
-type Manifestation = {
-  id: string;
-  timestamp: number;
-  buildType: BuildType;
-  input: string;
-  output: string;
-};
-
-type PersistedState = {
-  v: number;
-  sid: string;
-  introComplete: boolean;
-  stage: Stage;
-  buildType: BuildType;
-  draft: string;
-  showResponse: boolean;
-  streamText: string;
-  lastInputSent: string;
-  manifestations: Manifestation[];
-};
-
-const STORAGE_PREFIX = "buildlio:nexus:v10k:";
-const PERSIST_VERSION = 3;
-
-function makeSid() {
-  return "nxs-" + Math.random().toString(36).slice(2, 12) + "-" + Date.now().toString(36).slice(-5);
-}
-
-function safeParse<T>(raw: string | null): T | null {
-  if (!raw) return null;
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
-}
-
-/* ─────────────────────── AETHER LATTICE (Year-10k Particle System) ─────────────────────── */
+/* ─────────────────────── AETHER LATTICE ─────────────────────── */
 function AetherLattice() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const mouseRef = useRef({ x: 0, y: 0, active: false });
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -93,8 +44,8 @@ function AetherLattice() {
 
     let raf: number;
     let W = 0, H = 0;
-    const particles: Particle[] = [];
-    const COUNT = 168;
+    const particles: any[] = [];
+    const COUNT = 140;
 
     const resize = () => {
       const dpr = window.devicePixelRatio || 1;
@@ -104,155 +55,71 @@ function AetherLattice() {
       canvas.height = H * dpr;
       ctx.scale(dpr, dpr);
     };
-
     resize();
     window.addEventListener("resize", resize);
-
-    const onMouse = (e: MouseEvent) => { mouseRef.current = { x: e.clientX, y: e.clientY, active: true }; };
-    const onLeave = () => { mouseRef.current.active = false; };
-    window.addEventListener("mousemove", onMouse);
-    window.addEventListener("mouseleave", onLeave);
 
     for (let i = 0; i < COUNT; i++) {
       particles.push({
         x: Math.random() * W,
         y: Math.random() * H,
-        vx: (Math.random() - 0.5) * 0.75,
-        vy: (Math.random() - 0.5) * 0.75,
-        r: Math.random() * 2.8 + 0.7,
-        alpha: Math.random() * 0.75 + 0.25,
+        vx: (Math.random() - 0.5) * 0.7,
+        vy: (Math.random() - 0.5) * 0.7,
+        r: Math.random() * 2.5 + 0.6,
+        alpha: Math.random() * 0.7 + 0.3,
         hue: [175, 195, 265, 310][Math.floor(Math.random() * 4)],
-        type: Math.random() > 0.68 ? "spark" : "node",
       });
     }
 
     const draw = () => {
-      ctx.fillStyle = "rgba(3, 3, 14, 0.11)";
+      ctx.fillStyle = "rgba(3,3,14,0.09)";
       ctx.fillRect(0, 0, W, H);
-
-      const mx = mouseRef.current.x;
-      const my = mouseRef.current.y;
 
       for (let i = 0; i < particles.length; i++) {
         const p = particles[i];
-
-        if (mouseRef.current.active) {
-          const dx = mx - p.x;
-          const dy = my - p.y;
-          const dist = Math.hypot(dx, dy) || 1;
-          if (dist < 310) {
-            const force = (310 - dist) / 310 * (p.type === "spark" ? 0.042 : 0.019);
-            p.vx += (dx / dist) * force;
-            p.vy += (dy / dist) * force;
-          }
-        }
-
-        p.vx *= 0.978;
-        p.vy *= 0.978;
         p.x += p.vx;
         p.y += p.vy;
-
-        if (p.x < 0) p.x = W;
-        if (p.x > W) p.x = 0;
-        if (p.y < 0) p.y = H;
-        if (p.y > H) p.y = 0;
-
-        for (let j = i + 1; j < particles.length; j += 2) {
-          const q = particles[j];
-          const dx = p.x - q.x;
-          const dy = p.y - q.y;
-          const d = Math.hypot(dx, dy);
-          if (d < 138) {
-            ctx.strokeStyle = `hsla(${(p.hue + q.hue) / 2}, 92%, 84%, ${(1 - d / 138) * 0.22})`;
-            ctx.lineWidth = 0.75;
-            ctx.beginPath();
-            ctx.moveTo(p.x, p.y);
-            ctx.lineTo(q.x, q.y);
-            ctx.stroke();
-          }
-        }
+        if (p.x < 0) p.x = W; if (p.x > W) p.x = 0;
+        if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
 
         ctx.save();
-        ctx.shadowBlur = p.type === "spark" ? 22 : 14;
-        ctx.shadowColor = `hsla(${p.hue}, 100%, 82%, 0.7)`;
-        ctx.fillStyle = p.type === "spark"
-          ? `hsla(72, 100%, 92%, ${p.alpha})`
-          : `hsla(${p.hue}, 100%, 79%, ${p.alpha})`;
+        ctx.shadowBlur = 20;
+        ctx.shadowColor = `hsla(${p.hue},100%,82%,0.6)`;
+        ctx.fillStyle = `hsla(${p.hue},100%,79%,${p.alpha})`;
         ctx.beginPath();
         ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
       }
-
       raf = requestAnimationFrame(draw);
     };
-
     draw();
 
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", resize);
-      window.removeEventListener("mousemove", onMouse);
-      window.removeEventListener("mouseleave", onLeave);
-    };
+    return () => cancelAnimationFrame(raf);
   }, []);
 
-  return (
-    <canvas
-      ref={canvasRef}
-      className="fixed inset-0 z-0 pointer-events-none mix-blend-screen"
-    />
-  );
+  return <canvas ref={canvasRef} className="fixed inset-0 z-0 pointer-events-none mix-blend-screen" />;
 }
 
-/* ─────────────────────── HOLO CORE v∞ ─────────────────────── */
+/* ─────────────────────── HOLO CORE ─────────────────────── */
 function HoloCore({ activated }: { activated: boolean }) {
   return (
     <div className={`holo-core ${activated ? "live" : ""}`}>
-      {[1, 2, 3, 4, 5, 6].map((i) => (
-        <div key={i} className={`ring ring-${i}`} />
-      ))}
+      {[1,2,3,4,5,6].map(i => <div key={i} className={`ring ring-${i}`} />)}
       <div className="core-frame">
         <svg viewBox="0 0 260 260" width="260" height="260">
-          <defs>
-            <linearGradient id="coreG" x1="20%" y1="20%" x2="80%" y2="80%">
-              <stop offset="0%" stopColor="#00f9ff" />
-              <stop offset="100%" stopColor="#c026d3" />
-            </linearGradient>
-          </defs>
-          <polygon
-            points="130,25 225,75 225,185 130,235 35,185 35,75"
-            fill="none"
-            stroke="url(#coreG)"
-            strokeWidth="3"
-            strokeOpacity="0.65"
-            className="hex-main"
-          />
+          <polygon points="130,25 225,75 225,185 130,235 35,185 35,75" fill="none" stroke="#00f9ff" strokeWidth="3" strokeOpacity="0.65" />
         </svg>
       </div>
       <div className="core-sphere">
         <div className="sphere-glow" />
-        <div className="sphere-inner">
-          <div className="nexus-eye" />
-        </div>
-        <div className="equator" />
-        <div className="meridian" />
-      </div>
-      <div className="data-arcs">
-        {[1, 2, 3].map((i) => (
-          <div key={i} className={`arc arc-${i}`} />
-        ))}
+        <div className="sphere-inner"><div className="nexus-eye" /></div>
       </div>
     </div>
   );
 }
 
 /* ─────────────────────── HOLOGRAPHIC CARD ─────────────────────── */
-function HoloCard({ card, onClick, pressed }: { 
-  card: Card; 
-  onClick: () => void; 
-  pressed: boolean;
-}) {
+function HoloCard({ card, onClick, pressed }: { card: Card; onClick: () => void; pressed: boolean }) {
   const ref = useRef<HTMLButtonElement>(null);
 
   const handleTilt = (e: React.MouseEvent) => {
@@ -273,14 +140,13 @@ function HoloCard({ card, onClick, pressed }: {
       onMouseMove={handleTilt}
       onMouseLeave={resetTilt}
       onClick={onClick}
-      className={`holo-card group ${pressed ? "pressed" : ""}`}
+      className={`holo-card ${pressed ? "pressed" : ""}`}
       type="button"
     >
       <div className="card-shimmer" />
-      <div className="card-icon">{CARD_ICONS[card.buildType]}</div>
+      <div className="card-icon">⬡</div>
       <div className="card-title">{card.title}</div>
       <div className="card-subtitle">{card.subtitle}</div>
-      {card.next && <div className="card-arrow">EXPLORE MODULE →</div>}
     </button>
   );
 }
@@ -289,10 +155,7 @@ function HoloCard({ card, onClick, pressed }: {
 function ScanText({ text, done }: { text: string; done: boolean }) {
   return (
     <div className="scan-wrap">
-      <div className="scan-text">
-        {text}
-        <span className={`cursor ${done ? "hidden" : ""}`}>▮</span>
-      </div>
+      <div className="scan-text">{text}<span className={`cursor ${done ? "hidden" : ""}`}>▮</span></div>
       <div className="scan-line" />
     </div>
   );
@@ -333,7 +196,7 @@ function IntroSequence({ onComplete }: { onComplete: () => void }) {
   useEffect(() => {
     let i = 0;
     const iv = setInterval(() => {
-      setBootLines((p) => [...p, BOOT_SEQ[i]]);
+      setBootLines(p => [...p, BOOT_SEQ[i]]);
       i++;
       if (i >= BOOT_SEQ.length) {
         clearInterval(iv);
@@ -363,9 +226,7 @@ function IntroSequence({ onComplete }: { onComplete: () => void }) {
       <AetherLattice />
       <div className="intro-content">
         <div className={`boot-terminal ${phase > 0 ? "exited" : ""}`}>
-          {bootLines.map((l, i) => (
-            <div key={i} className="boot-line">▸ {l}</div>
-          ))}
+          {bootLines.map((l, i) => <div key={i} className="boot-line">▸ {l}</div>)}
         </div>
         <HoloCore activated={phase >= 1} />
         {phase >= 1 && (
@@ -375,97 +236,37 @@ function IntroSequence({ onComplete }: { onComplete: () => void }) {
           </div>
         )}
       </div>
-      <div className="corner-hud tl">Ω-9 SINGULARITY ANCHOR</div>
-      <div className="corner-hud tr">COHERENCE 100.00%</div>
     </div>
   );
 }
 
-/* ─────────────────────── ICONS & DATA ─────────────────────── */
+/* ─────────────────────── ICONS ─────────────────────── */
 const CARD_ICONS: Record<BuildType, string> = {
-  website: "⬡",
-  agent: "◈",
-  store: "◎",
-  document: "▣",
-  app: "⬢",
-  other: "⟐",
+  website: "⬡", agent: "◈", store: "◎", document: "▣", app: "⬢", other: "⟐",
 };
 
 /* ─────────────────────── MAIN NEXUS ─────────────────────── */
 export default function NexusPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const sid = useMemo(() => {
-    const s = searchParams?.get("sid");
-    return s && s.length > 5 ? s : "";
-  }, [searchParams]);
+  const sid = useMemo(() => searchParams?.get("sid") || "", [searchParams]);
 
   const [introComplete, setIntroComplete] = useState(false);
   const [fadeOut, setFadeOut] = useState(false);
-
   const [stage, setStage] = useState<Stage>("root");
   const [buildType, setBuildType] = useState<BuildType>("website");
   const [draft, setDraft] = useState("");
   const [streamText, setStreamText] = useState("");
   const [showResponse, setShowResponse] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [lastInputSent, setLastInputSent] = useState("");
-  const [manifestations, setManifestations] = useState<Manifestation[]>([]);
   const [pressedKey, setPressedKey] = useState<string | null>(null);
   const [stageKey, setStageKey] = useState(0);
-  const [isListening, setIsListening] = useState(false);
 
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // URL sid
   useEffect(() => {
-    if (sid) return;
-    const newSid = makeSid();
-    router.replace(`/?sid=${newSid}`);
+    if (!sid) router.replace(`/?sid=nxs-${Date.now()}`);
   }, [sid, router]);
-
-  // Persistence
-  useEffect(() => {
-    if (!sid) return;
-    const saved = safeParse<PersistedState>(localStorage.getItem(STORAGE_PREFIX + sid));
-    if (!saved || saved.v !== PERSIST_VERSION) return;
-
-    setIntroComplete(saved.introComplete);
-    setStage(saved.stage);
-    setBuildType(saved.buildType);
-    setDraft(saved.draft);
-    setShowResponse(saved.showResponse);
-    setStreamText(saved.streamText);
-    setLastInputSent(saved.lastInputSent);
-    setManifestations(saved.manifestations || []);
-    setStageKey((k) => k + 1);
-  }, [sid]);
-
-  useEffect(() => {
-    if (!sid) return;
-    const payload: PersistedState = {
-      v: PERSIST_VERSION,
-      sid,
-      introComplete,
-      stage,
-      buildType,
-      draft,
-      showResponse,
-      streamText,
-      lastInputSent,
-      manifestations,
-    };
-    localStorage.setItem(STORAGE_PREFIX + sid, JSON.stringify(payload));
-  }, [sid, introComplete, stage, buildType, draft, showResponse, streamText, lastInputSent, manifestations]);
-
-  const stageTitle: Record<Stage, string> = {
-    root: "What transcendent system shall we manifest?",
-    documentKind: "What thought architecture do you require?",
-    websiteKind: "What kind of portal shall we weave?",
-    agentKind: "What role shall your autonomous mind fulfill?",
-    storeKind: "What commerce singularity are we igniting?",
-    appKind: "What reality interface shall we forge?",
-  };
 
   const rootCards: Card[] = [
     { key: "website", title: "WEAVE HYPER-PORTAL", subtitle: "Digital sanctums that transcend attention and forge legacies.", buildType: "website", next: "websiteKind" },
@@ -516,20 +317,27 @@ export default function NexusPage() {
 
   const cards: Card[] = stage === "root" ? rootCards : (kindCards[stage as KindStage] || []);
 
+  const stageTitle: Record<Stage, string> = {
+    root: "What transcendent system shall we manifest?",
+    documentKind: "What thought architecture do you require?",
+    websiteKind: "What kind of portal shall we weave?",
+    agentKind: "What role shall your autonomous mind fulfill?",
+    storeKind: "What commerce singularity are we igniting?",
+    appKind: "What reality interface shall we forge?",
+  };
+
   const handleCardClick = (card: Card) => {
     setPressedKey(card.key);
     setBuildType(card.buildType);
-
     setTimeout(() => {
       setPressedKey(null);
       if (card.next) {
         setStage(card.next);
-        setStageKey((k) => k + 1);
-        setTimeout(() => inputRef.current?.focus(), 180);
+        setStageKey(k => k + 1);
       } else {
-        setDraft((prev) => prev.trim() || seedFromSelection(card));
-        setTimeout(() => inputRef.current?.focus(), 140);
+        setDraft(prev => prev.trim() || `Architect a transcendent ${card.buildType}...`);
       }
+      setTimeout(() => inputRef.current?.focus(), 120);
     }, 180);
   };
 
@@ -541,100 +349,62 @@ export default function NexusPage() {
     }, 680);
   }, []);
 
-  // Voice Transmission
-  const toggleVoice = () => {
-    const Speech = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!Speech) return alert("Voice transmission not available in this realm.");
-    const rec = new Speech();
-    rec.lang = "en-US";
-    rec.onresult = (e: any) => setDraft((d) => d + (d ? " " : "") + e.results[0][0].transcript);
-    rec.onend = () => setIsListening(false);
-    setIsListening(true);
-    rec.start();
-  };
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!draft.trim() || isLoading) return;
-
     setIsLoading(true);
     setShowResponse(true);
     setStreamText("");
-    setLastInputSent(draft);
 
-    try {
-      const res = await fetch("/api/buildlio", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1200,
-          messages: [{ role: "user", content: draft }],
-        }),
-      });
-
-      const data = await res.json();
-      const full = data.text || "Neural link established.";
-
-      let i = 0;
-      const iv = setInterval(() => {
-        if (i < full.length) {
-          setStreamText(full.slice(0, i + 1));
-          i += 4;
-        } else {
-          setStreamText(full);
-          clearInterval(iv);
-          setIsLoading(false);
-
-          setManifestations((prev) => [
-            {
-              id: Date.now().toString(36),
-              timestamp: Date.now(),
-              buildType,
-              input: draft,
-              output: full,
-            },
-            ...prev,
-          ].slice(0, 12));
-        }
-      }, 11);
-    } catch {
-      setStreamText("Quantum link disrupted. Please try again.");
-      setIsLoading(false);
-    }
+    // Demo response (replace with your real /api/buildlio call)
+    const full = `I have received your vision.\n\nManifesting...\n\n${draft}\n\nThe system is now being forged at the speed of thought.`;
+    setStreamText(full);
+    setIsLoading(false);
   }
 
   return (
     <main className={`nexus-root ${oxanium.variable} ${shareTechMono.variable}`}>
       <style jsx global>{`
-        :root {
-          --cyan: #00f9ff;
-          --violet: #c026d3;
-          --emerald: #22ffaa;
-          --glass: rgba(10, 15, 42, 0.72);
-        }
-        .nexus-root { background: #03030f; overflow: hidden; font-family: var(--font-sans), sans-serif; }
+        :root { --cyan: #00f9ff; --violet: #c026d3; --glass: rgba(10,15,42,0.88); }
+        .nexus-root { background:#03030f; color:#e8f4ff; min-height:100vh; overflow:hidden; position:relative; font-family:var(--font-sans); }
+        .hud { position:fixed; top:0; left:0; right:0; z-index:200; display:flex; align-items:center; justify-content:space-between; padding:1.2rem 3rem; background:rgba(3,3,15,0.95); border-bottom:1px solid rgba(0,249,255,0.2); }
+        .hud-brand { font-size:2rem; font-weight:800; letter-spacing:6px; color:var(--cyan); }
+        .hud button { background:rgba(0,249,255,0.1); border:1px solid rgba(0,249,255,0.5); color:var(--cyan); padding:0.7rem 1.6rem; border-radius:14px; font-weight:600; cursor:pointer; }
+        .stage-header { padding:7rem 3rem 3rem; text-align:center; }
+        .stage-title { font-size:2.8rem; font-weight:700; letter-spacing:4px; }
+        .holo-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(380px, 1fr)); gap:2rem; padding:0 3rem; }
         .holo-card {
-          background: var(--glass);
-          border: 1px solid rgba(0,249,255,0.22);
-          border-radius: 20px;
-          backdrop-filter: blur(24px);
-          box-shadow: 0 10px 40px -15px rgb(0 249 255 / 0.2);
-          transition: all 0.4s cubic-bezier(0.23,1,0.32,1);
-          position: relative;
-          overflow: hidden;
+          background:var(--glass); border:1px solid rgba(0,249,255,0.25); border-radius:24px;
+          padding:2.5rem; backdrop-filter:blur(28px); transition:all .4s cubic-bezier(0.23,1,0.32,1);
+          position:relative; overflow:hidden; text-align:left;
         }
-        .holo-card:hover { border-color: #00f9ff; box-shadow: 0 0 70px -12px rgb(0 249 255 / 0.45); }
-        .card-shimmer {
-          position: absolute; inset: 0;
-          background: linear-gradient(120deg, transparent, rgba(255,255,255,0.35), transparent);
-          background-size: 300% 100%;
-          animation: shimmer 3.2s linear infinite;
-          opacity: 0.6;
-          pointer-events: none;
+        .holo-card:hover { border-color:var(--cyan); box-shadow:0 0 90px -15px rgba(0,249,255,0.6); transform:translateY(-12px); }
+        .card-shimmer { position:absolute; inset:0; background:linear-gradient(120deg,transparent,rgba(255,255,255,0.18),transparent); background-size:300% 100%; animation:shimmer 4s linear infinite; pointer-events:none; }
+        @keyframes shimmer { 0%{background-position:300% 0} 100%{background-position:-300% 0} }
+        .card-icon { font-size:4.5rem; margin-bottom:1.5rem; opacity:0.9; }
+        .card-title { font-size:1.65rem; font-weight:700; margin-bottom:0.8rem; }
+        .card-subtitle { opacity:0.85; line-height:1.5; }
+
+        .response-panel {
+          margin:2rem 3rem; background:var(--glass); border:1px solid rgba(0,249,255,0.3);
+          border-radius:22px; backdrop-filter:blur(24px); padding:2.5rem; max-height:45vh; overflow:auto;
+          font-family:var(--font-mono); font-size:1.05rem; line-height:1.75; white-space:pre-wrap;
         }
-        @keyframes shimmer { 0% { background-position: 300% 0; } 100% { background-position: -300% 0; } }
-        .forge-btn { background: linear-gradient(90deg, #00f9ff, #c026d3); }
+
+        .command-nexus {
+          position:fixed; bottom:0; left:0; right:0; z-index:300; background:rgba(3,3,15,0.98);
+          border-top:1px solid rgba(0,249,255,0.35); padding:1.4rem 3rem; display:flex; align-items:center; gap:1rem;
+        }
+        .prompt { color:var(--cyan); font-size:2.2rem; }
+        .neural-input {
+          flex:1; background:rgba(0,0,0,0.7); border:1px solid rgba(0,249,255,0.4);
+          padding:1.25rem 1.6rem; border-radius:18px; color:white; font-size:1.2rem;
+        }
+        .forge-btn {
+          padding:1.25rem 3rem; background:linear-gradient(90deg,#00f9ff,#c026d3); color:#000;
+          font-weight:700; border:none; border-radius:18px; cursor:pointer; font-size:1.15rem;
+        }
+        .fade-veil { position:fixed; inset:0; background:#03030f; z-index:400; transition:opacity 0.7s; }
       `}</style>
 
       <AetherLattice />
@@ -645,42 +415,29 @@ export default function NexusPage() {
         <>
           <div className="hud">
             <div className="hud-brand">BUILDLIO</div>
-            <div className="hud-meta">
-              <span>MODE <span className="accent">{buildType.toUpperCase()}</span></span>
-              <span>COHERENCE <span className="text-emerald-400">∞</span></span>
-            </div>
+            <div>MODE <span style={{color:'#00f9ff'}}>{buildType.toUpperCase()}</span></div>
+            <button onClick={() => router.push("/login")}>NEURAL LOGIN</button>
           </div>
 
-          <div className="main-content">
-            <div className="stage-header">
-              <HoloCore activated />
-              <div className="stage-title">{stageTitle[stage]}</div>
-            </div>
-
-            <div key={stageKey} className="holo-grid">
-              {cards.map((c) => (
-                <HoloCard
-                  key={c.key}
-                  card={c}
-                  onClick={() => handleCardClick(c)}
-                  pressed={pressedKey === c.key}
-                />
-              ))}
-            </div>
-
-            {showResponse && (
-              <div className="response-panel glass">
-                <div className="response-body">{streamText}</div>
-                <div className="response-actions">
-                  <button onClick={() => setShowResponse(false)}>NEW VISION</button>
-                  <button>REFINE</button>
-                  <button>ARCHIVE TO NEXUS</button>
-                </div>
-              </div>
-            )}
+          <div className="stage-header">
+            <HoloCore activated />
+            <div className="stage-title">{stageTitle[stage]}</div>
           </div>
 
-          <form className="command-nexus glass" onSubmit={handleSubmit}>
+          <div key={stageKey} className="holo-grid">
+            {cards.map((c) => (
+              <HoloCard
+                key={c.key}
+                card={c}
+                onClick={() => handleCardClick(c)}
+                pressed={pressedKey === c.key}
+              />
+            ))}
+          </div>
+
+          {showResponse && <div className="response-panel">{streamText}</div>}
+
+          <form className="command-nexus" onSubmit={handleSubmit}>
             <span className="prompt">⌬</span>
             <input
               ref={inputRef}
@@ -690,9 +447,6 @@ export default function NexusPage() {
               className="neural-input"
               disabled={isLoading}
             />
-            <button type="button" onClick={toggleVoice} className="voice-btn">
-              {isListening ? "◉" : "🎤"}
-            </button>
             <button type="submit" className="forge-btn" disabled={!draft.trim() || isLoading}>
               {isLoading ? "FORGING..." : "MANIFEST ⚡"}
             </button>
@@ -703,8 +457,4 @@ export default function NexusPage() {
       {fadeOut && <div className="fade-veil" />}
     </main>
   );
-}
-
-function seedFromSelection(card: Card) {
-  return `Architect a ${card.buildType} of transcendent quality. Define every detail. I am ready.`;
 }
