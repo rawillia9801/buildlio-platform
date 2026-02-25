@@ -782,15 +782,6 @@ export default function Page() {
 
   return (
     <div style={{ minHeight: "100vh", background: "#fff", color: "#111" }}>
-      <style jsx global>{`
-        html, body {
-          height: 100%;
-          margin: 0;
-          background: #fff;
-        }
-        * { box-sizing: border-box; }
-      `}</style>
-
       <Grain />
       <BuildlioAwakeningCanvas stage={stage} onStageAdvance={onStageAdvance} setPresenceStrength={setPresenceStrength} />
       <ReticleOverlay strength={presenceStrength} />
@@ -834,19 +825,37 @@ export default function Page() {
                 />
               )}
             </div>
+<style jsx global>{`
+  :root { 
+    --cyan: #00f9ff; 
+    --magenta: #c026d3;
+    --glass: rgba(10, 15, 35, 0.4); 
+    --glass-border: rgba(0, 249, 255, 0.15);
+  }
 
-            <style jsx>{`
-              @keyframes blink {
-                0%,
-                100% {
-                  opacity: 0.65;
-                }
-                50% {
-                  opacity: 0;
-                }
-              }
-            `}</style>
+  body, html { margin: 0; padding: 0; background: #020208; color: #e8f4ff; }
 
+  .nexus-root { 
+    min-height: 100vh; 
+    overflow-x: hidden; 
+    position: relative; 
+    background: radial-gradient(circle at 50% 0%, #0a1128 0%, #020208 70%);
+  }
+
+  @keyframes scanline { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
+  @keyframes pulse-glow { 0%, 100% { box-shadow: 0 0 20px rgba(0, 249, 255, 0.2); } 50% { box-shadow: 0 0 40px rgba(0, 249, 255, 0.5); } }
+  @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-5px); } }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+  @keyframes spin-slow { 100% { transform: rotate(360deg); } }
+  @keyframes spin-reverse { 100% { transform: rotate(-360deg); } }
+
+  .animate-blink { animation: blink 1s step-end infinite; }
+  .animate-spin-slow { animation: spin-slow 15s linear infinite; }
+  .animate-spin-reverse { animation: spin-reverse 20s linear infinite; transform-origin: center; }
+  .text-shadow-glow { text-shadow: 0 0 10px rgba(0, 249, 255, 0.4); }
+
+  /* keep the rest of your CSS here — but ONLY here */
+`}</style>
             <div style={{ marginTop: 18, fontSize: 14, color: "rgba(0,0,0,0.55)" }}>
               Buildlio.Site — websites, documents, apps, stores, agents.
             </div>
