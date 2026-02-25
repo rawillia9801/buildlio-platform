@@ -31,7 +31,8 @@ export async function POST(req: Request) {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
+        // 🔴 THIS IS THE FIX: Anthropic requires 'x-api-key'
+        "x-api-key": apiKey,
         // Required by Anthropic
         "anthropic-version": "2023-06-01",
       },
