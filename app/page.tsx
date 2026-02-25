@@ -919,3 +919,4 @@ function seedFromSelection(card: Pick<Card, "buildType">) {
   if (card.buildType === "app")
     return "Build a web application. Define: target users, core workflows, data requirements, and integration needs.";
   return "Describe your vision in full detail. I am ready to architect something extraordinary.";
+}
