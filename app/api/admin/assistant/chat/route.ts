@@ -26,7 +26,6 @@ Return short, clear confirmations.
 `.trim();
 }
 
-// Minimal shape for Anthropic tool_use blocks (avoids TS "name does not exist")
 type ToolUseBlock = {
   type: "tool_use";
   id: string;
@@ -36,10 +35,10 @@ type ToolUseBlock = {
 
 export async function POST(req: Request) {
   try {
-    // ✅ Next.js cookies() is NOT a Promise here. Do not await it.
-    const cookieStore = cookies();
+    // ✅ In your build, cookies() is async-typed. Await it INSIDE the handler.
+    const cookieStore = await cookies();
 
-    // ✅ Correct @supabase/ssr cookie adapter for Route Handlers
+    // ✅ Supabase SSR client with correct cookie adapter
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -49,11 +48,11 @@ export async function POST(req: Request) {
             return cookieStore.getAll();
           },
           setAll(cookiesToSet) {
-            // In Route Handlers, this is allowed. If your environment blocks it,
-            // it will throw; we fail silently to avoid crashing the handler.
+            // Route Handlers may allow setting cookies; if blocked, do not crash.
             try {
               for (const { name, value, options } of cookiesToSet) {
-                cookieStore.set(name, value, options);
+                // cookieStore is read-only typed, but runtime may still support set()
+                (cookieStore as any).set?.(name, value, options);
               }
             } catch {
               // no-op
@@ -98,9 +97,7 @@ export async function POST(req: Request) {
         role: "user",
         content: input.message,
       });
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
-      }
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
     // Pull recent messages for context
@@ -111,13 +108,11 @@ export async function POST(req: Request) {
       .order("created_at", { ascending: true })
       .limit(30);
 
-    if (msgsErr) {
-      return NextResponse.json({ error: msgsErr.message }, { status: 500 });
-    }
+    if (msgsErr) return NextResponse.json({ error: msgsErr.message }, { status: 500 });
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
-    // Define tools Claude can call
+    // Tools Claude can call
     const tools: any[] = [
       {
         name: "create_litter",
@@ -195,11 +190,7 @@ export async function POST(req: Request) {
             notes: input.notes ?? null,
           });
           if (error) return { ok: false, error: error.message };
-          return {
-            ok: true,
-            summary: `Created litter: ${input.litter_name} (${input.dob})`,
-            did_mutate: true,
-          };
+          return { ok: true, summary: `Created litter: ${input.litter_name} (${input.dob})`, did_mutate: true };
         }
 
         if (name === "create_puppy") {
@@ -222,18 +213,11 @@ export async function POST(req: Request) {
 
         if (name === "update_puppy") {
           const { puppy_id, patch } = input ?? {};
-          if (!puppy_id || !patch || typeof patch !== "object") {
-            return { ok: false, error: "Invalid patch" };
-          }
+          if (!puppy_id || !patch || typeof patch !== "object") return { ok: false, error: "Invalid patch" };
 
-          // You said: never invent price. So we only update what patch explicitly includes.
           const { error } = await supabase.from("puppies").update(patch).eq("id", puppy_id);
           if (error) return { ok: false, error: error.message };
-          return {
-            ok: true,
-            summary: `Updated puppy ${String(puppy_id).slice(-6)}`,
-            did_mutate: true,
-          };
+          return { ok: true, summary: `Updated puppy ${String(puppy_id).slice(-6)}`, did_mutate: true };
         }
 
         if (name === "log_puppy_event") {
@@ -262,7 +246,6 @@ export async function POST(req: Request) {
     let didMutate = false;
     let assistantText = "";
 
-    // Anthropic message format
     const conversation = (msgs || []).map((m: any) => ({
       role: m.role,
       content: [{ type: "text", text: m.content }],
@@ -304,11 +287,9 @@ export async function POST(req: Request) {
         ],
       });
 
-      assistantText =
-        (second.content || []).find((c: any) => c.type === "text")?.text || "Done.";
+      assistantText = (second.content || []).find((c: any) => c.type === "text")?.text || "Done.";
     } else {
-      assistantText =
-        (first.content || []).find((c: any) => c.type === "text")?.text || "Done.";
+      assistantText = (first.content || []).find((c: any) => c.type === "text")?.text || "Done.";
     }
 
     // Save assistant response
@@ -319,16 +300,10 @@ export async function POST(req: Request) {
         role: "assistant",
         content: assistantText,
       });
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 500 });
-      }
+      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
     }
 
-    return NextResponse.json({
-      thread_id: threadId,
-      reply: assistantText,
-      did_mutate: didMutate,
-    });
+    return NextResponse.json({ thread_id: threadId, reply: assistantText, did_mutate: didMutate });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Failed" }, { status: 500 });
   }
