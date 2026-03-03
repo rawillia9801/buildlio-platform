@@ -21,7 +21,7 @@ export async function POST(req: Request) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        // Switched to the universal tag to bypass the 404 error
+        // FIXED: Universal tag bypasses the 404 'not_found_error'
         model: "claude-3-5-sonnet-latest", 
         max_tokens: body.max_tokens || 1600,
         system: body.system,
