@@ -1,4 +1,3 @@
-// FILE: components/ops/pages/DailyOpsPage.tsx
 import { Card, CardHeader, StatCard, Pill, Button } from "@/components/ops/ui";
 
 export function DailyOpsPage() {
