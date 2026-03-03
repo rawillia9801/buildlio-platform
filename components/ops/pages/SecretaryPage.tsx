@@ -138,11 +138,11 @@ export function SecretaryPage() {
 
           <div className="border-t border-black/5 p-4">
             <div className="flex gap-2">
-              <Input
-                value={draft}
-                onChange={setDraft}
-                placeholder="Ask me anything: buyers, puppies, orders, domains, bills..."
-              />
+<Input
+  value={draft}
+  onChange={(e) => setDraft(e.target.value)} // <-- Update this line!
+  placeholder="Ask me anything: buyers, puppies, orders, domains, bills..."
+/>
               <Button variant="primary" onClick={send}>
                 SEND
               </Button>
