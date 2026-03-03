@@ -1,3 +1,4 @@
+// app/api/admin/assistant/chat/route.ts
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -11,7 +12,9 @@ const Body = z.object({
   message: z.string().min(1),
 });
 
-type ToolResult = { ok: true; summary: string; did_mutate: boolean } | { ok: false; error: string };
+type ToolResult =
+  | { ok: true; summary: string; did_mutate: boolean }
+  | { ok: false; error: string };
 
 function sysPrompt() {
   return `
@@ -23,17 +26,37 @@ Return short, clear confirmations.
 `;
 }
 
+/**
+ * Type guard: Anthropic message content can include text blocks and tool_use blocks.
+ * Only tool_use blocks have { name, input, id }.
+ */
+function isToolUseBlock(
+  c: any
+): c is { type: "tool_use"; id: string; name: string; input: any } {
+  return (
+    !!c &&
+    c.type === "tool_use" &&
+    typeof c.id === "string" &&
+    typeof c.name === "string"
+  );
+}
+
 export async function POST(req: Request) {
   try {
     const cookieStore = await cookies();
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-      { cookies: { get: (name) => cookieStore.get(name)?.value } }
+      {
+        cookies: {
+          get: (name) => cookieStore.get(name)?.value,
+        },
+      }
     );
 
     const { data: auth } = await supabase.auth.getUser();
-    if (!auth?.user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    if (!auth?.user)
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
 
     const input = Body.parse(await req.json());
     const userId = auth.user.id;
@@ -47,7 +70,13 @@ export async function POST(req: Request) {
         .insert({ owner_id: userId, title: "Admin Assistant" })
         .select("id")
         .single();
-      if (error || !th) return NextResponse.json({ error: error?.message || "Failed to create thread" }, { status: 500 });
+
+      if (error || !th)
+        return NextResponse.json(
+          { error: error?.message || "Failed to create thread" },
+          { status: 500 }
+        );
+
       threadId = th.id;
     }
 
@@ -148,7 +177,11 @@ export async function POST(req: Request) {
             notes: input.notes ?? null,
           });
           if (error) return { ok: false, error: error.message };
-          return { ok: true, summary: `Created litter: ${input.litter_name} (${input.dob})`, did_mutate: true };
+          return {
+            ok: true,
+            summary: `Created litter: ${input.litter_name} (${input.dob})`,
+            did_mutate: true,
+          };
         }
 
         if (name === "create_puppy") {
@@ -171,12 +204,18 @@ export async function POST(req: Request) {
 
         if (name === "update_puppy") {
           const { puppy_id, patch } = input;
-          if (!puppy_id || !patch || typeof patch !== "object") return { ok: false, error: "Invalid patch" };
+          if (!puppy_id || !patch || typeof patch !== "object")
+            return { ok: false, error: "Invalid patch" };
 
           // never allow assistant to invent price; if price not explicitly in patch, leave it alone.
           const { error } = await supabase.from("puppies").update(patch).eq("id", puppy_id);
           if (error) return { ok: false, error: error.message };
-          return { ok: true, summary: `Updated puppy ${puppy_id.slice(-6)}`, did_mutate: true };
+
+          return {
+            ok: true,
+            summary: `Updated puppy ${String(puppy_id).slice(-6)}`,
+            did_mutate: true,
+          };
         }
 
         if (name === "log_puppy_event") {
@@ -189,7 +228,14 @@ export async function POST(req: Request) {
             notes: input.notes ?? null,
           });
           if (error) return { ok: false, error: error.message };
-          return { ok: true, summary: `Logged ${input.event_type} for puppy ${input.puppy_id.slice(-6)} on ${input.event_date}`, did_mutate: true };
+
+          return {
+            ok: true,
+            summary: `Logged ${input.event_type} for puppy ${String(input.puppy_id).slice(
+              -6
+            )} on ${input.event_date}`,
+            did_mutate: true,
+          };
         }
 
         return { ok: false, error: `Unknown tool: ${name}` };
@@ -216,9 +262,11 @@ export async function POST(req: Request) {
     });
 
     // If Claude used tools, execute them and send results back once (simple, stable)
-    const toolUses = (first.content || []).filter((c: any) => c.type === "tool_use");
+    const toolUses = (first.content || []).filter(isToolUseBlock);
+
     if (toolUses.length) {
       const toolResults: any[] = [];
+
       for (const tu of toolUses) {
         const r = await runTool(tu.name, tu.input);
         if (r.ok && r.did_mutate) didMutate = true;
@@ -243,12 +291,10 @@ export async function POST(req: Request) {
       });
 
       assistantText =
-        (second.content || []).find((c: any) => c.type === "text")?.text ||
-        "Done.";
+        (second.content || []).find((c: any) => c.type === "text")?.text || "Done.";
     } else {
       assistantText =
-        (first.content || []).find((c: any) => c.type === "text")?.text ||
-        "Done.";
+        (first.content || []).find((c: any) => c.type === "text")?.text || "Done.";
     }
 
     // Save assistant response
@@ -259,7 +305,11 @@ export async function POST(req: Request) {
       content: assistantText,
     });
 
-    return NextResponse.json({ thread_id: threadId, reply: assistantText, did_mutate: didMutate });
+    return NextResponse.json({
+      thread_id: threadId,
+      reply: assistantText,
+      did_mutate: didMutate,
+    });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Failed" }, { status: 500 });
   }
