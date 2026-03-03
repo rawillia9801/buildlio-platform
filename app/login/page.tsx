@@ -2,20 +2,41 @@
 "use client";
 
 import React, { Suspense, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardHeader, CardContent, Input, Button } from "@/components/ops/ui";
+import { createBrowserClient } from "@supabase/ssr";
 
 function LoginForm() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const errorMsg = searchParams.get("error");
   
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    // Your actual authentication logic will go here later
-    console.log("Attempting login for:", email);
+    setLoading(true);
+
+    // Initialize Supabase
+    const supabase = createBrowserClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+    );
+
+    // Authenticate
+    const { error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error) {
+      router.push(`/login?error=${encodeURIComponent(error.message)}`);
+      setLoading(false);
+    } else {
+      router.push("/"); // Successfully logged in, return to Nexus
+    }
   };
 
   return (
@@ -26,7 +47,6 @@ function LoginForm() {
       />
       <CardContent>
         <form onSubmit={handleLogin} className="space-y-4 pt-2">
-          {/* Automatically handles and displays ?error= url parameters */}
           {errorMsg && (
             <div className="rounded-xl bg-rose-50 p-3 text-sm font-medium text-rose-700 border border-rose-100">
               {errorMsg}
@@ -56,8 +76,8 @@ function LoginForm() {
           </div>
           
           <div className="pt-2">
-            <Button type="submit" variant="primary" className="w-full">
-              SIGN IN
+            <Button type="submit" variant="primary" className="w-full" disabled={loading}>
+              {loading ? "AUTHENTICATING..." : "SIGN IN"}
             </Button>
           </div>
         </form>
@@ -66,8 +86,6 @@ function LoginForm() {
   );
 }
 
-// This is the default export that Next.js expects.
-// The Suspense boundary satisfies the build requirement for useSearchParams.
 export default function LoginPage() {
   return (
     <div className="min-h-screen bg-slate-50 px-4 py-12 flex items-start justify-center">

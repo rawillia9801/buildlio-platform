@@ -8,7 +8,7 @@
 "use client";
 
 import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
-import { useRouter } from "next/navigation"; // useSearchParams completely removed
+import { useRouter } from "next/navigation";
 import { Oxanium, Share_Tech_Mono } from "next/font/google";
 
 /* ─────────────────────── FONTS ─────────────────────── */
@@ -345,7 +345,14 @@ Respond with commanding clarity and technological excellence.`;
       });
 
       const data = await res.json();
-      const full = data.text || "Neural link stable. Rooting manifestation protocol. Establish patience cadence.";
+      
+      // CHECK FOR SUPABASE/API ERRORS FIRST
+      let full = "";
+      if (data.success === false && data.error) {
+        full = `[SYSTEM DENIAL]: ${data.error}`;
+      } else {
+        full = data.text || "Neural link stable. Rooting manifestation protocol. Establish patience cadence.";
+      }
 
       let i = 0;
       const iv = setInterval(() => {
