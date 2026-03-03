@@ -1,4 +1,5 @@
-// app/api/admin/assistant/chat/route.ts
+// FILE: app/api/admin/assistant/chat/route.ts
+
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -26,19 +27,20 @@ Return short, clear confirmations.
 `.trim();
 }
 
-type ToolUseBlock = {
-  type: "tool_use";
-  id: string;
-  name: string;
-  input: any;
-};
+function extractText(content: any): string {
+  const blocks = Array.isArray(content) ? content : [];
+  const text = blocks
+    .filter((b: any) => b?.type === "text" && typeof b?.text === "string")
+    .map((b: any) => b.text)
+    .join("");
+  return text && text.trim().length ? text : "Done.";
+}
 
 export async function POST(req: Request) {
   try {
-    // ✅ In your build, cookies() is async-typed. Await it INSIDE the handler.
-    const cookieStore = await cookies();
+    // DO NOT await cookies()
+    const cookieStore = cookies();
 
-    // ✅ Supabase SSR client with correct cookie adapter
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
@@ -48,14 +50,8 @@ export async function POST(req: Request) {
             return cookieStore.getAll();
           },
           setAll(cookiesToSet) {
-            // Route Handlers may allow setting cookies; if blocked, do not crash.
-            try {
-              for (const { name, value, options } of cookiesToSet) {
-                // cookieStore is read-only typed, but runtime may still support set()
-                (cookieStore as any).set?.(name, value, options);
-              }
-            } catch {
-              // no-op
+            for (const { name, value, options } of cookiesToSet) {
+              cookieStore.set(name, value, options);
             }
           },
         },
@@ -90,15 +86,12 @@ export async function POST(req: Request) {
     }
 
     // Save user message
-    {
-      const { error } = await supabase.from("chat_messages").insert({
-        thread_id: threadId,
-        owner_id: userId,
-        role: "user",
-        content: input.message,
-      });
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    await supabase.from("chat_messages").insert({
+      thread_id: threadId,
+      owner_id: userId,
+      role: "user",
+      content: input.message,
+    });
 
     // Pull recent messages for context
     const { data: msgs, error: msgsErr } = await supabase
@@ -108,11 +101,16 @@ export async function POST(req: Request) {
       .order("created_at", { ascending: true })
       .limit(30);
 
-    if (msgsErr) return NextResponse.json({ error: msgsErr.message }, { status: 500 });
+    if (msgsErr) {
+      return NextResponse.json(
+        { error: msgsErr.message || "Failed to load messages" },
+        { status: 500 }
+      );
+    }
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
-    // Tools Claude can call
+    // Define tools Claude can call
     const tools: any[] = [
       {
         name: "create_litter",
@@ -190,7 +188,11 @@ export async function POST(req: Request) {
             notes: input.notes ?? null,
           });
           if (error) return { ok: false, error: error.message };
-          return { ok: true, summary: `Created litter: ${input.litter_name} (${input.dob})`, did_mutate: true };
+          return {
+            ok: true,
+            summary: `Created litter: ${input.litter_name} (${input.dob})`,
+            did_mutate: true,
+          };
         }
 
         if (name === "create_puppy") {
@@ -212,12 +214,18 @@ export async function POST(req: Request) {
         }
 
         if (name === "update_puppy") {
-          const { puppy_id, patch } = input ?? {};
-          if (!puppy_id || !patch || typeof patch !== "object") return { ok: false, error: "Invalid patch" };
+          const { puppy_id, patch } = input;
+          if (!puppy_id || !patch || typeof patch !== "object") {
+            return { ok: false, error: "Invalid patch" };
+          }
 
           const { error } = await supabase.from("puppies").update(patch).eq("id", puppy_id);
           if (error) return { ok: false, error: error.message };
-          return { ok: true, summary: `Updated puppy ${String(puppy_id).slice(-6)}`, did_mutate: true };
+          return {
+            ok: true,
+            summary: `Updated puppy ${String(puppy_id).slice(-6)}`,
+            did_mutate: true,
+          };
         }
 
         if (name === "log_puppy_event") {
@@ -244,7 +252,6 @@ export async function POST(req: Request) {
     }
 
     let didMutate = false;
-    let assistantText = "";
 
     const conversation = (msgs || []).map((m: any) => ({
       role: m.role,
@@ -259,7 +266,10 @@ export async function POST(req: Request) {
       messages: conversation as any,
     });
 
-    const toolUses = ((first.content || []).filter((c: any) => c?.type === "tool_use") as ToolUseBlock[]) || [];
+    const firstBlocks: any[] = Array.isArray((first as any).content) ? (first as any).content : [];
+    const toolUses: any[] = firstBlocks.filter((b: any) => b?.type === "tool_use");
+
+    let assistantText = "";
 
     if (toolUses.length) {
       const toolResults: any[] = [];
@@ -282,26 +292,22 @@ export async function POST(req: Request) {
         tools,
         messages: [
           ...(conversation as any),
-          { role: "assistant", content: first.content as any },
+          { role: "assistant", content: (first as any).content },
           { role: "user", content: toolResults as any },
         ],
       });
 
-      assistantText = (second.content || []).find((c: any) => c.type === "text")?.text || "Done.";
+      assistantText = extractText((second as any).content);
     } else {
-      assistantText = (first.content || []).find((c: any) => c.type === "text")?.text || "Done.";
+      assistantText = extractText((first as any).content);
     }
 
-    // Save assistant response
-    {
-      const { error } = await supabase.from("chat_messages").insert({
-        thread_id: threadId,
-        owner_id: userId,
-        role: "assistant",
-        content: assistantText,
-      });
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
-    }
+    await supabase.from("chat_messages").insert({
+      thread_id: threadId,
+      owner_id: userId,
+      role: "assistant",
+      content: assistantText,
+    });
 
     return NextResponse.json({ thread_id: threadId, reply: assistantText, did_mutate: didMutate });
   } catch (e: any) {
