@@ -8,9 +8,12 @@
   "devDependencies": {
     "@tailwindcss/cli": "^4.2.1",
     "@tailwindcss/postcss": "^4.2.1",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
     "autoprefixer": "^10.4.27",
     "postcss": "^8.5.6",
-    "tailwindcss": "^4.2.1"
+    "tailwindcss": "^4.2.1",
+    "typescript": "^5.9.3"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.78.0",
