@@ -21,8 +21,8 @@ export async function POST(req: Request) {
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        // Using the latest Claude 3.5 Sonnet model
-        model: "claude-3-5-sonnet-20241022", 
+        // Switched to the universal tag to bypass the 404 error
+        model: "claude-3-5-sonnet-latest", 
         max_tokens: body.max_tokens || 1600,
         system: body.system,
         messages: body.messages,
