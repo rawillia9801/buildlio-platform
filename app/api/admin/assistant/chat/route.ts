@@ -38,8 +38,9 @@ function extractText(content: any): string {
 
 export async function POST(req: Request) {
   try {
-    // DO NOT await cookies()
-    const cookieStore = cookies();
+    // ✅ Next 16.x build env types cookies() as async in Route Handlers.
+    // ✅ Must await inside the handler (NOT at top-level).
+    const cookieStore = await cookies();
 
     const supabase = createServerClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
