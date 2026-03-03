@@ -7,7 +7,7 @@
 
 "use client";
 
-import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
+import React, { useRef, useState, useEffect, useCallback, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Oxanium, Share_Tech_Mono } from "next/font/google";
 
@@ -263,15 +263,14 @@ const kindCards: Record<KindStage, Card[]> = {
     { key: "doc_marketing", title: "Marketing Matrix", subtitle: "Sales pages, pitch decks, campaign manifests.", buildType: "document" },
     { key: "doc_other", title: "Other Protocol", subtitle: "Submit your parameters.", buildType: "document" },
   ],
-  // ...other existing card kind definitions remain but titles are upgraded in similar "manifest" tone
   websiteKind: [],
   agentKind: [],
   storeKind: [],
   appKind: [],
 };
 
-/* ─────────────────────── MAIN PAGE: THE NEXUS PORTAL ─────────────────────── */
-export default function NexusPage() {
+/* ─────────────────────── MAIN PAGE CONTENT ─────────────────────── */
+function NexusPortal() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const sid = useMemo(() => searchParams?.get("sid") || "", [searchParams]);
@@ -606,5 +605,14 @@ Respond with commanding clarity and technological excellence.`;
         </div>
       )}
     </main>
+  );
+}
+
+/* ─────────────────────── EXPORT WITH SUSPENSE BOUNDARY ─────────────────────── */
+export default function NexusPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-[#020208] text-[#00f9ff] flex items-center justify-center font-mono tracking-widest text-sm">ESTABLISHING NEURAL LINK...</div>}>
+      <NexusPortal />
+    </Suspense>
   );
 }
