@@ -16,17 +16,6 @@ type ToolResult =
   | { ok: true; summary: string; did_mutate: boolean }
   | { ok: false; error: string };
 
-type ToolUseBlock = {
-  type: "tool_use";
-  id: string;
-  name: string;
-  input: any;
-};
-
-function isToolUseBlock(b: any): b is ToolUseBlock {
-  return !!b && b.type === "tool_use" && typeof b.name === "string" && typeof b.id === "string";
-}
-
 function sysPrompt() {
   return `
 You are SWVA Chihuahua's admin assistant.
@@ -37,48 +26,52 @@ Return short, clear confirmations.
 `.trim();
 }
 
-/**
- * Supabase SSR in a Route Handler:
- * - We only need to READ auth cookies for this endpoint.
- * - Avoid getAll()/setAll() to prevent Next type/version mismatches.
- * - Avoid top-level await entirely.
- */
-async function supabaseForRoute() {
-  const cookieStoreMaybe: any = cookies();
-  const cookieStore: any =
-    typeof cookieStoreMaybe?.then === "function" ? await cookieStoreMaybe : cookieStoreMaybe;
-
-  return createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) {
-          return cookieStore?.get?.(name)?.value;
-        },
-        set() {
-          // no-op: this endpoint does not need to set auth cookies
-        },
-        remove() {
-          // no-op
-        },
-      },
-    }
-  );
-}
+// Minimal shape for Anthropic tool_use blocks (avoids TS "name does not exist")
+type ToolUseBlock = {
+  type: "tool_use";
+  id: string;
+  name: string;
+  input: any;
+};
 
 export async function POST(req: Request) {
   try {
-    const supabase = await supabaseForRoute();
+    // ✅ Next.js cookies() is NOT a Promise here. Do not await it.
+    const cookieStore = cookies();
 
-    const { data: auth, error: authErr } = await supabase.auth.getUser();
-    if (authErr) return NextResponse.json({ error: authErr.message }, { status: 401 });
-    if (!auth?.user) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    // ✅ Correct @supabase/ssr cookie adapter for Route Handlers
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return cookieStore.getAll();
+          },
+          setAll(cookiesToSet) {
+            // In Route Handlers, this is allowed. If your environment blocks it,
+            // it will throw; we fail silently to avoid crashing the handler.
+            try {
+              for (const { name, value, options } of cookiesToSet) {
+                cookieStore.set(name, value, options);
+              }
+            } catch {
+              // no-op
+            }
+          },
+        },
+      }
+    );
+
+    const { data: auth } = await supabase.auth.getUser();
+    if (!auth?.user) {
+      return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+    }
 
     const input = Body.parse(await req.json());
     const userId = auth.user.id;
 
-    // 1) Load or create thread
+    // Load or create thread
     let threadId = input.thread_id ?? null;
 
     if (!threadId) {
@@ -97,7 +90,7 @@ export async function POST(req: Request) {
       threadId = th.id;
     }
 
-    // 2) Save user message
+    // Save user message
     {
       const { error } = await supabase.from("chat_messages").insert({
         thread_id: threadId,
@@ -105,22 +98,26 @@ export async function POST(req: Request) {
         role: "user",
         content: input.message,
       });
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
     }
 
-    // 3) Pull recent messages for context
-    const { data: msgs, error: msgErr } = await supabase
+    // Pull recent messages for context
+    const { data: msgs, error: msgsErr } = await supabase
       .from("chat_messages")
       .select("role, content, created_at")
       .eq("thread_id", threadId)
       .order("created_at", { ascending: true })
       .limit(30);
 
-    if (msgErr) return NextResponse.json({ error: msgErr.message }, { status: 500 });
+    if (msgsErr) {
+      return NextResponse.json({ error: msgsErr.message }, { status: 500 });
+    }
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY! });
 
-    // 4) Tools Claude can call
+    // Define tools Claude can call
     const tools: any[] = [
       {
         name: "create_litter",
@@ -186,7 +183,6 @@ export async function POST(req: Request) {
       },
     ];
 
-    // 5) Execute tool
     async function runTool(name: string, input: any): Promise<ToolResult> {
       try {
         if (name === "create_litter") {
@@ -199,7 +195,11 @@ export async function POST(req: Request) {
             notes: input.notes ?? null,
           });
           if (error) return { ok: false, error: error.message };
-          return { ok: true, summary: `Created litter: ${input.litter_name} (${input.dob})`, did_mutate: true };
+          return {
+            ok: true,
+            summary: `Created litter: ${input.litter_name} (${input.dob})`,
+            did_mutate: true,
+          };
         }
 
         if (name === "create_puppy") {
@@ -222,13 +222,18 @@ export async function POST(req: Request) {
 
         if (name === "update_puppy") {
           const { puppy_id, patch } = input ?? {};
-          if (!puppy_id || !patch || typeof patch !== "object") return { ok: false, error: "Invalid patch" };
+          if (!puppy_id || !patch || typeof patch !== "object") {
+            return { ok: false, error: "Invalid patch" };
+          }
 
-          // Note: your policy is "never invent prices". That is enforced by your admin UI / operator.
-          // This tool only applies what the caller explicitly supplies in patch.
+          // You said: never invent price. So we only update what patch explicitly includes.
           const { error } = await supabase.from("puppies").update(patch).eq("id", puppy_id);
           if (error) return { ok: false, error: error.message };
-          return { ok: true, summary: `Updated puppy ${String(puppy_id).slice(-6)}`, did_mutate: true };
+          return {
+            ok: true,
+            summary: `Updated puppy ${String(puppy_id).slice(-6)}`,
+            did_mutate: true,
+          };
         }
 
         if (name === "log_puppy_event") {
@@ -254,14 +259,16 @@ export async function POST(req: Request) {
       }
     }
 
-    // 6) Build Claude conversation (Anthropic accepts content arrays)
+    let didMutate = false;
+    let assistantText = "";
+
+    // Anthropic message format
     const conversation = (msgs || []).map((m: any) => ({
-      role: m.role === "assistant" ? "assistant" : "user",
-      content: [{ type: "text", text: String(m.content ?? "") }],
+      role: m.role,
+      content: [{ type: "text", text: m.content }],
     }));
 
-    // 7) First Claude pass (may request tools)
-    const first: any = await client.messages.create({
+    const first = await client.messages.create({
       model: "claude-3-5-sonnet-latest",
       max_tokens: 700,
       system: sysPrompt(),
@@ -269,12 +276,7 @@ export async function POST(req: Request) {
       messages: conversation as any,
     });
 
-    let didMutate = false;
-    let assistantText = "";
-
-    const toolUses: ToolUseBlock[] = Array.isArray(first?.content)
-      ? first.content.filter(isToolUseBlock)
-      : [];
+    const toolUses = ((first.content || []).filter((c: any) => c?.type === "tool_use") as ToolUseBlock[]) || [];
 
     if (toolUses.length) {
       const toolResults: any[] = [];
@@ -290,7 +292,7 @@ export async function POST(req: Request) {
         });
       }
 
-      const second: any = await client.messages.create({
+      const second = await client.messages.create({
         model: "claude-3-5-sonnet-latest",
         max_tokens: 700,
         system: sysPrompt(),
@@ -303,15 +305,13 @@ export async function POST(req: Request) {
       });
 
       assistantText =
-        (Array.isArray(second?.content) ? second.content : []).find((c: any) => c.type === "text")?.text ||
-        "Done.";
+        (second.content || []).find((c: any) => c.type === "text")?.text || "Done.";
     } else {
       assistantText =
-        (Array.isArray(first?.content) ? first.content : []).find((c: any) => c.type === "text")?.text ||
-        "Done.";
+        (first.content || []).find((c: any) => c.type === "text")?.text || "Done.";
     }
 
-    // 8) Save assistant response
+    // Save assistant response
     {
       const { error } = await supabase.from("chat_messages").insert({
         thread_id: threadId,
@@ -319,10 +319,16 @@ export async function POST(req: Request) {
         role: "assistant",
         content: assistantText,
       });
-      if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 500 });
+      }
     }
 
-    return NextResponse.json({ thread_id: threadId, reply: assistantText, did_mutate: didMutate });
+    return NextResponse.json({
+      thread_id: threadId,
+      reply: assistantText,
+      did_mutate: didMutate,
+    });
   } catch (e: any) {
     return NextResponse.json({ error: e?.message || "Failed" }, { status: 500 });
   }

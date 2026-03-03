@@ -1,7 +1,9 @@
 // app/api/messenger/webhook/route.ts
+export const runtime = "nodejs";
+
 import { NextResponse } from "next/server";
 
-const VERIFY_TOKEN =chihuahua_secure_2026
+const VERIFY_TOKEN = process.env.MESSENGER_VERIFY_TOKEN || "chihuahua_secure_2026";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -11,17 +13,18 @@ export async function GET(req: Request) {
   const challenge = searchParams.get("hub.challenge");
 
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("Webhook verified");
-    return new Response(challenge, { status: 200 });
+    return new Response(challenge ?? "", { status: 200 });
   }
 
   return new Response("Forbidden", { status: 403 });
 }
 
 export async function POST(req: Request) {
-  const body = await req.json();
+  // Keep this minimal so it always builds.
+  // You can expand handling logic later.
+  const body = await req.json().catch(() => null);
 
-  console.log("Messenger event:", JSON.stringify(body, null, 2));
+  // TODO: verify signature (X-Hub-Signature-256) if you want secure verification.
 
-  return NextResponse.json({ status: "received" });
+  return NextResponse.json({ ok: true, received: body }, { status: 200 });
 }
