@@ -73,7 +73,7 @@ export function ToolsHostingPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <Input value={q} onChange={setQ} placeholder="Search domains, sites, servers..." />
+          <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search domains, sites, servers..." />
           <Button variant="primary">ADD</Button>
         </div>
       </div>
