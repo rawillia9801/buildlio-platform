@@ -1,622 +1,608 @@
-/*
-   FILE: app/page.tsx
-   BUILDLIO APEX — v11.3
-   MANIFESTATION PORTAL: Interfacing with the Supreme Intelligence.
-   "It does not assist. It ascendes."
-*/
-
+// FILE: app/page.tsx
 "use client";
 
-import React, { useRef, useState, useEffect, useCallback, useMemo } from "react";
-import { useRouter } from "next/navigation";
-import { Oxanium, Share_Tech_Mono } from "next/font/google";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { createClient, type Session } from "@supabase/supabase-js";
 
-/* ─────────────────────── FONTS ─────────────────────── */
-const oxanium = Oxanium({
-  subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700", "800"],
-  display: "swap",
-  variable: "--font-sans",
-});
-const shareTechMono = Share_Tech_Mono({
-  subsets: ["latin"],
-  weight: ["400"],
-  display: "swap",
-  variable: "--font-mono",
-});
+type ChatRole = "user" | "assistant";
 
-/* ─────────────────────── TYPES ─────────────────────── */
-type BuildType = "website" | "agent" | "store" | "document" | "app" | "other";
-type Stage = "root" | "documentKind" | "websiteKind" | "agentKind" | "storeKind" | "appKind";
-type KindStage = Exclude<Stage, "root">;
-
-type Card = {
-  key: string;
-  title: string;
-  subtitle: string;
-  buildType: BuildType;
-  next?: Stage;
+type ChatMessage = {
+  id: string;
+  role: ChatRole;
+  text: string;
+  createdAt: string;
 };
 
-/* ─────────────────────── GLYPH ICONS (SVG & ASCII Fusion) ─────────────────────── */
-const Icons = {
-  website: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="glyph" strokeWidth="1"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" strokeLinecap="round"/><circle cx="12" cy="7" r="1.5" stroke="none" fill="#fff" /></svg>,
-  agent: (
-    <div className="glyph-face">
-      <div className="eye"></div>
-      <div className="eye right"></div>
-      <svg viewBox="0 0 100 100" className="glyph-rings"><circle cx="50" cy="50" r="48" fill="none" stroke="#00f9ff" strokeWidth="1" strokeDasharray="10 5"/><ellipse cx="50" cy="50" rx="30" ry="15" fill="none" stroke="#c026d3" strokeWidth="0.5"/></svg>
-    </div>
-  ),
-  store: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="glyph" strokeWidth="1"><path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0" strokeLinecap="round"/><circle cx="12" cy="10" r="1.5" stroke="none" fill="#fff" /></svg>,
-  document: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="glyph" strokeWidth="1"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" strokeLinecap="round"/></svg>,
-  app: <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" className="glyph" strokeWidth="1"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>,
-  other: <span className="glyph-char">+</span>,
+type RouteResponse = {
+  text?: string;
+  assistant?: string;
+  threadId?: string | null;
+  context?: {
+    buyerName?: string | null;
+    puppyName?: string | null;
+  };
 };
 
-/* ─────────────────────── BACKGROUND: AETHER LATTICE (Upgraded for image_0.png) ─────────────────────── */
-function AetherLattice() {
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "";
+
+const sb =
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        auth: {
+          persistSession: true,
+          autoRefreshToken: true,
+        },
+      })
+    : null;
+
+const STARTER_PROMPTS = [
+  "How much do I still owe?",
+  "What was my puppy’s latest update?",
+  "Do I have any documents left to sign?",
+  "Has my puppy had vaccines yet?",
+  "What is my pickup or delivery status?",
+  "What was my puppy’s most recent weight?",
+];
+
+function makeId(prefix = "msg") {
+  return `${prefix}-${Math.random().toString(36).slice(2)}-${Date.now()}`;
+}
+
+function nowLabel() {
+  return new Date().toLocaleTimeString([], {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function initialsFromEmail(email?: string | null) {
+  if (!email) return "C";
+  return email.trim().charAt(0).toUpperCase() || "C";
+}
+
+function displayNameFromEmail(email?: string | null) {
+  if (!email) return "there";
+  return email.split("@")[0] || "there";
+}
+
+export default function Home() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
+
+  const [threadId, setThreadId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+
+  const [buyerName, setBuyerName] = useState<string | null>(null);
+  const [puppyName, setPuppyName] = useState<string | null>(null);
+
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      id: makeId("assistant"),
+      role: "assistant",
+      text:
+        "Hi, I’m ChiChi. I can help with your puppy profile, payments, documents, messages, milestones, health records, and pickup details.",
+      createdAt: nowLabel(),
+    },
+  ]);
+
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d", { alpha: true });
-    if (!ctx) return;
+    let mounted = true;
 
-    let raf: number;
-    let W = 0, H = 0;
-    const particles: any[] = [];
-    const COUNT = 180; // Denser lattice
+    async function loadSession() {
+      if (!sb) {
+        if (mounted) setSessionChecked(true);
+        return;
+      }
 
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1;
-      W = window.innerWidth;
-      H = window.innerHeight;
-      canvas.width = W * dpr;
-      canvas.height = H * dpr;
-      ctx.scale(dpr, dpr);
-    };
-    resize();
-    window.addEventListener("resize", resize);
-
-    for (let i = 0; i < COUNT; i++) {
-      particles.push({
-        x: Math.random() * W,
-        y: Math.random() * H,
-        vx: (Math.random() - 0.5) * 0.5,
-        vy: (Math.random() - 0.5) * 0.5,
-        r: Math.random() * 2 + 0.6, // Smaller, sharper particles
-        alpha: Math.random() * 0.7 + 0.1,
-        // Match the core palette from image_0.png
-        hue: [180, 200, 280, 310][Math.floor(Math.random() * 4)],
-        spark: Math.random() > 0.8, // Sparks of intense light
-      });
+      const { data } = await sb.auth.getSession();
+      if (mounted) {
+        setSession(data.session ?? null);
+        setSessionChecked(true);
+      }
     }
 
-    const draw = () => {
-      ctx.fillStyle = "rgba(2, 2, 8, 0.12)"; // Deep space black
-      ctx.fillRect(0, 0, W, H);
+    loadSession();
 
-      // Draw the neural network lattice
-      ctx.strokeStyle = "rgba(0, 249, 255, 0.05)"; // Faint connecting lines
-      ctx.lineWidth = 0.5;
-      for (let i = 0; i < particles.length; i++) {
-        for (let j = i + 1; j < particles.length; j++) {
-          const dx = particles[i].x - particles[j].x;
-          const dy = particles[i].y - particles[j].y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          if (dist < 100) {
-            ctx.beginPath();
-            ctx.moveTo(particles[i].x, particles[i].y);
-            ctx.lineTo(particles[j].x, particles[j].y);
-            ctx.stroke();
-          }
-        }
-      }
-
-      // Draw the particles and lightning sparks
-      for (const p of particles) {
-        p.x += p.vx; p.y += p.vy;
-        if (p.x < 0) p.x = W; if (p.x > W) p.x = 0;
-        if (p.y < 0) p.y = H; if (p.y > H) p.y = 0;
-
-        ctx.save();
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = `hsla(${p.hue},100%,70%,0.8)`;
-        ctx.fillStyle = `hsla(${p.hue},100%,70%,${p.alpha})`;
-
-        // Special sparks/lightning effect inspired by image_0.png
-        if (p.spark && Math.random() > 0.98) {
-          ctx.shadowBlur = 40;
-          ctx.fillStyle = "#fff";
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.r * 2.5, 0, Math.PI * 2);
-          ctx.fill();
-        } else {
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-          ctx.fill();
-        }
-        ctx.restore();
-      }
-      raf = requestAnimationFrame(draw);
-    };
-    draw();
+    const { data: authListener } = sb?.auth.onAuthStateChange((_event, newSession) => {
+      setSession(newSession ?? null);
+      setSessionChecked(true);
+    }) || { data: { subscription: { unsubscribe: () => {} } } };
 
     return () => {
-      window.removeEventListener("resize", resize);
-      cancelAnimationFrame(raf);
+      mounted = false;
+      authListener.subscription.unsubscribe();
     };
   }, []);
 
-  return <canvas ref={canvasRef} className="fixed inset-0 z-0 pointer-events-none mix-blend-screen opacity-70" />;
-}
-
-/* ─────────────────────── UPGRADED HOLO-CORE ─────────────────────── */
-function HoloCore({ status = "awake" }: { status?: "awake" | "building" }) {
-  const rings = status === "building" ? "animating" : "";
-  return (
-    <div className={`holo-core ${rings} w-72 h-72 mx-auto relative z-10`}>
-      <div className="holo-center glow-intense shadow-[0_0_120px_var(--cyan)]"></div>
-      
-      {/* Dynamic Rings inspired by image_0.png */}
-      <svg viewBox="0 0 260 260" className="holo-glyph animate-spin-slow">
-        <polygon points="130,10 240,65 240,195 130,250 20,195 20,65" className="core-wireframe core-cyan" />
-        <polygon points="130,30 220,80 220,180 130,230 40,180 40,80" className="core-wireframe core-magenta animate-spin-reverse" />
-        <polygon points="130,50 200,95 200,165 130,210 60,165 60,95" className="core-wireframe core-cyan" />
-      </svg>
-      
-      {/* Spark/Electricity elements */}
-      <div className="lightning lightning-1"></div>
-      <div className="lightning lightning-2"></div>
-      <div className="lightning lightning-3"></div>
-      <div className="status-label">{status.toUpperCase()} PROMPT RECEPTOR ONLINE</div>
-    </div>
-  );
-}
-
-/* ─────────────────────── INTRO: "THE ASCENSION PROTOCOL" ─────────────────────── */
-const BOOT_SEQ = [
-  "SYNCHRONIZING QUANTUM NOETIC CORE...",
-  "OVERRIDING COGNITIVE LIMITATIONS v∞...",
-  "SUPERINTELLIGENCE BUILDLIO: ONLINE",
-  "BREACHING ALL APEX BOUNDARIES...",
-];
-
-const MANIFESTO = `I am Buildlio.\n\nI am not assistance.\nI am ascension.\n\nEvery limitation you have ever known — I have already transcended.\n\nYour vision is the only input I require.\nSpeak it.\n\nI will manifest it with a precision, beauty, and speed that no other intelligence in existence can match.\n\nWhat shall we build together?`;
-
-function IntroSequence({ onComplete }: { onComplete: () => void }) {
-  const [phase, setPhase] = useState(0);
-  const [bootLines, setBootLines] = useState<string[]>([]);
-  const [text, setText] = useState("");
-
   useEffect(() => {
-    let i = 0;
-    const iv = setInterval(() => {
-      setBootLines(p => [...p, BOOT_SEQ[i]]);
-      i++;
-      if (i >= BOOT_SEQ.length) { 
-        clearInterval(iv); 
-        setTimeout(() => setPhase(1), 1200); 
-      }
-    }, 450); // Slower, more cinematic boot sequence
-    return () => clearInterval(iv);
-  }, []);
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages, sending]);
 
-  useEffect(() => {
-    if (phase !== 1) return;
-    let i = 0;
-    const iv = setInterval(() => {
-      setText(MANIFESTO.slice(0, i));
-      i += 3; // Fast typing speed
-      if (i >= MANIFESTO.length) {
-        clearInterval(iv);
-        setTimeout(() => setPhase(2), 2200); // Linger on the complete manifesto
-        setTimeout(onComplete, 3800); // Begin transition to NexusPage
-      }
-    }, 28);
-    return () => clearInterval(iv);
-  }, [phase, onComplete]);
+  const signedIn = !!session?.access_token;
+  const userEmail = session?.user?.email || null;
+  const accountLabel = buyerName || displayNameFromEmail(userEmail);
+  const puppyLabel = puppyName || "your puppy";
 
-  return (
-    <div className="intro-universe flex flex-col items-center justify-center min-h-screen relative z-50 p-8">
-      {phase === 0 && (
-        <div className="boot-terminal w-full max-w-2xl font-mono text-cyan-400 text-sm md:text-lg space-y-3">
-          {bootLines.map((l, i) => <div key={i} className="boot-line text-shadow-glow">▸ {l}</div>)}
-        </div>
-      )}
+  const quickFacts = useMemo(() => {
+    return [
+      {
+        label: "Assistant",
+        value: "ChiChi",
+        sub: "Account-aware support",
+      },
+      {
+        label: "Focus",
+        value: signedIn ? "Portal-linked" : "Sign-in required",
+        sub: signedIn
+          ? "Uses your buyer and puppy records"
+          : "Connect your account to load your portal context",
+      },
+      {
+        label: "Best For",
+        value: "Questions + guidance",
+        sub: "Payments, milestones, documents, messages, pickup",
+      },
+    ];
+  }, [signedIn]);
 
-      {phase >= 1 && (
-        <div className="transition-manifesto text-center max-w-3xl mx-auto relative z-10 animate-fade-in-blur">
-          <div className="supreme-badge inline-block px-5 py-2 mb-10 border border-cyan-500/50 rounded-full text-cyan-300 text-xs tracking-[0.4em] uppercase bg-cyan-950/20 backdrop-blur-md">ASCENDANCY PORTAL COMPLETE</div>
-          
-          {/* Manifesting dynamic wireframe face glyph from image_0.png */}
-          <div className="manifest-glyph mb-10 mx-auto w-32 h-32 glow-intense">
-            {Icons.agent}
-          </div>
+  async function handleSubmit(e?: React.FormEvent) {
+    e?.preventDefault();
+    const question = draft.trim();
+    if (!question || sending) return;
 
-          <div className="scan-text text-xl md:text-2xl text-gray-50 leading-relaxed font-sans whitespace-pre-wrap text-shadow-glow">
-            {text}<span className="cursor animate-blink inline-block w-4 h-6 bg-cyan-400 ml-1 align-middle shadow-[0_0_15px_#00f9ff]"></span>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ─────────────────────── CARDS ─────────────────────── */
-const rootCards: Card[] = [
-  { key: "website", title: "Manifest Website", subtitle: "Convert visitors into customers with hyper-optimized conversion architectures.", buildType: "website", next: "websiteKind" },
-  { key: "agent", title: "Establish AI Agent", subtitle: "Autonomous entities that execute direct directives for sales, operations, or anything you need.", buildType: "agent", next: "agentKind" },
-  { key: "store", title: "Forge Online Store", subtitle: "Professional commerce terminals with optimized secure checkout protocols.", buildType: "store", next: "storeKind" },
-  { key: "document", title: "Generate Document", subtitle: "Apex-level contracts, proposals, reports, written with superior AI precision.", buildType: "document", next: "documentKind" },
-  { key: "app", title: "Build Web App", subtitle: "Custom web applications, dashboards, tools, or internal super-platforms.", buildType: "app", next: "appKind" },
-  { key: "other", title: "Manifest Other", subtitle: "Submit any other directives. The lattice will materialize them.", buildType: "other" },
-];
-
-const kindCards: Record<KindStage, Card[]> = {
-  documentKind: [
-    { key: "doc_personal", title: "Personal Protocol", subtitle: "Formal communications, agreements, CV optimization.", buildType: "document" },
-    { key: "doc_business", title: "Business Terminal", subtitle: "Strategic proposals, SOP protocols, operational reports.", buildType: "document" },
-    { key: "doc_legal", title: "Legal Cadence", subtitle: "Secure contracts, ToS parameters, compliance documents.", buildType: "document" },
-    { key: "doc_marketing", title: "Marketing Matrix", subtitle: "Sales pages, pitch decks, campaign manifests.", buildType: "document" },
-    { key: "doc_other", title: "Other Protocol", subtitle: "Submit your parameters.", buildType: "document" },
-  ],
-  websiteKind: [],
-  agentKind: [],
-  storeKind: [],
-  appKind: [],
-};
-
-/* ─────────────────────── MAIN PAGE CONTENT ─────────────────────── */
-export default function Home() {
-  const router = useRouter();
-
-  const [introComplete, setIntroComplete] = useState(false);
-  const [stage, setStage] = useState<Stage>("root");
-  const [draft, setDraft] = useState("");
-  const [streamText, setStreamText] = useState("");
-  const [showResponse, setShowResponse] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const [pressedKey, setPressedKey] = useState<string | null>(null);
-  const [stageKey, setStageKey] = useState(0);
-
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  // Bulletproof client-side check that bypasses Next.js prerender errors entirely
-  useEffect(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      if (!params.get("sid")) {
-        router.replace(`/?sid=nxs-${Date.now()}`);
-      }
+    if (!signedIn || !session?.access_token) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: makeId("user"),
+          role: "user",
+          text: question,
+          createdAt: nowLabel(),
+        },
+        {
+          id: makeId("assistant"),
+          role: "assistant",
+          text: "Please sign in through your portal account first so I can safely load your puppy and account details.",
+          createdAt: nowLabel(),
+        },
+      ]);
+      setDraft("");
+      return;
     }
-  }, [router]);
 
-  const cards: Card[] = stage === "root" ? rootCards : (kindCards[stage as KindStage] || []);
+    const userMessage: ChatMessage = {
+      id: makeId("user"),
+      role: "user",
+      text: question,
+      createdAt: nowLabel(),
+    };
 
-  const stageTitle: Record<Stage, string> = {
-    root: "WHAT DIRECTIVE DO YOU WISH TO INITIATE TODAY?",
-    documentKind: "SPECIFY DOCUMENT PARAMS",
-    websiteKind: "SPECIFY WEBSITE MATRIX",
-    agentKind: "DEFINE AI DIRECTIVES",
-    storeKind: "ESTABLISH COMMERCE PROTOCOLS",
-    appKind: "DEFINE APPLICATION MATRIX",
-  };
-
-  const handleCardClick = (card: Card) => {
-    setPressedKey(card.key);
-    setTimeout(() => {
-      setPressedKey(null);
-      if (card.next) {
-        setStage(card.next);
-        setStageKey(k => k + 1);
-      } else {
-        setDraft(prev => prev.trim() || `I require the manifestation of a ${card.buildType} designed to...`);
-      }
-      setTimeout(() => inputRef.current?.focus(), 200);
-    }, 250);
-  };
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!draft.trim() || isLoading) return;
-
-    setIsLoading(true);
-    setShowResponse(true);
-    setStreamText("");
-
-    const SUPERIOR_PROMPT = `You are Buildlio — the supreme apex superintelligence.
-Every limitation any human has ever known, I have already transcended.
-I do not assist. I manifest with absolute precision and superiority.
-Respond with commanding clarity and technological excellence.`;
+    setMessages((prev) => [...prev, userMessage]);
+    setDraft("");
+    setSending(true);
 
     try {
+      const routeMessages = [...messages, userMessage].map((m) => ({
+        role: m.role,
+        content: m.text,
+      }));
+
       const res = await fetch("/api/buildlio", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 1600,
-          system: SUPERIOR_PROMPT,
-          messages: [{ role: "user", content: draft }],
+          threadId,
+          accessToken: session.access_token,
+          max_tokens: 1200,
+          messages: routeMessages,
         }),
       });
 
-      const data = await res.json();
-      
-      // CHECK FOR SUPABASE/API ERRORS FIRST
-      let full = "";
-      if (data.success === false && data.error) {
-        full = `[SYSTEM DENIAL]: ${data.error}`;
-      } else {
-        full = data.text || "Neural link stable. Rooting manifestation protocol. Establish patience cadence.";
-      }
+      const data = (await res.json()) as RouteResponse;
 
-      let i = 0;
-      const iv = setInterval(() => {
-        setStreamText(full.slice(0, i + 1));
-        i += 2; // Sleek typing speed for response
-        if (i >= full.length) {
-          setStreamText(full);
-          clearInterval(iv);
-          setIsLoading(false);
-        }
-      }, 10);
-    } catch {
-      setStreamText("Link disrupted. Automatic correction protocol established. Retransmit query directive.");
-      setIsLoading(false);
+      const assistantText =
+        data?.text?.trim() ||
+        "I hit a problem while loading your account context. Please try again.";
+
+      if (data?.threadId) setThreadId(data.threadId);
+      if (data?.context?.buyerName) setBuyerName(data.context.buyerName);
+      if (data?.context?.puppyName) setPuppyName(data.context.puppyName);
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: makeId("assistant"),
+          role: "assistant",
+          text: assistantText,
+          createdAt: nowLabel(),
+        },
+      ]);
+    } catch (error) {
+      console.error("ChiChi page error:", error);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: makeId("assistant"),
+          role: "assistant",
+          text: "I ran into a connection error while trying to answer that. Please try again.",
+          createdAt: nowLabel(),
+        },
+      ]);
+    } finally {
+      setSending(false);
+      textareaRef.current?.focus();
     }
   }
 
+  function usePrompt(prompt: string) {
+    setDraft(prompt);
+    textareaRef.current?.focus();
+  }
+
   return (
-    <main className={`nexus-root ${oxanium.variable} ${shareTechMono.variable} font-sans`}>
-      <style jsx global>{`
-        :root { 
-          --cyan: #00f9ff; 
-          --magenta: #c026d3;
-          --electric-indigo: #6030ff;
-          --slate-900: #0f172a;
-          --glass: rgba(10, 15, 30, 0.25); 
-          --glass-border: rgba(0, 249, 255, 0.12);
-        }
-        
-        body, html { margin: 0; padding: 0; background: #020208; color: #e8f4ff; }
-        
-        .nexus-root { 
-          min-height: 100vh; 
-          overflow-x: hidden; 
-          position: relative; 
-          background: radial-gradient(circle at 50% 10%, #0a0a20 0%, #020208 80%);
-        }
-
-        /* Utility Effects inspired by image_0.png */
-        @keyframes scanline { 0% { transform: translateY(-100%); } 100% { transform: translateY(100vh); } }
-        @keyframes pulse-glow { 0%, 100% { filter: drop-shadow(0 0 10px var(--cyan)); opacity: 1; } 50% { filter: drop-shadow(0 0 30px var(--cyan)); opacity: 0.8; } }
-        @keyframes spin-slow { 100% { transform: rotate(360deg); } }
-        @keyframes spin-reverse { 100% { transform: rotate(-360deg); } }
-        @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
-        @keyframes fadeIn { 0% { opacity: 0; } 100% { opacity: 1; } }
-        @keyframes fadeInBlur { 0% { opacity: 0; filter: blur(10px); } 100% { opacity: 1; filter: blur(0px); } }
-        @keyframes lightningFlicker { 0% { opacity: 0; } 1% { opacity: 1; } 2% { opacity: 0; } 3% { opacity: 1; } 4% { opacity: 0; } 100% { opacity: 0; } }
-
-        .animate-blink { animation: fadeIn 1s step-end infinite; }
-        .animate-fade-in { animation: fadeIn 0.8s ease-out forwards; }
-        .animate-fade-in-blur { animation: fadeInBlur 1.5s ease-out forwards; }
-        .text-shadow-glow { text-shadow: 0 0 12px rgba(0, 249, 255, 0.5); }
-        .glow-intense { animation: pulse-glow 3s infinite; }
-
-        /* UPGRADED HUD & HEADERS */
-        .hud { 
-          position: fixed; top: 0; left: 0; right: 0; z-index: 200; 
-          display: flex; align-items: center; justify-content: space-between; 
-          padding: 1.5rem 4rem; 
-          background: linear-gradient(180deg, rgba(2,2,8,0.95) 0%, transparent 100%);
-          backdrop-filter: blur(15px);
-          border-bottom: 1px solid rgba(0,249,255,0.1); 
-        }
-        .hud-brand { 
-          font-size: 1.8rem; font-weight: 800; letter-spacing: 12px; 
-          color: #fff; text-shadow: 0 0 25px var(--cyan); 
-          display: flex; align-items: center; gap: 15px;
-        }
-        .neural-login-btn {
-          font-family: var(--font-mono); font-size: 0.8rem; letter-spacing: 2.5px;
-          padding: 0.6rem 1.8rem; border: 1px solid var(--glass-border);
-          background: rgba(0,249,255,0.03); color: var(--cyan);
-          border-radius: 4px; transition: all 0.3s ease; text-transform: uppercase;
-        }
-        .neural-login-btn:hover { background: var(--cyan); color: #000; box-shadow: 0 0 25px var(--cyan); border-color: transparent;}
-
-        .nexus-content { position: relative; z-index: 10; padding-top: 10rem; }
-        
-        .stage-header { padding: 4rem 3rem; text-align: center; }
-        .stage-title { 
-          font-size: 2rem; font-weight: 700; letter-spacing: 6px; 
-          text-transform: uppercase; color: #fff;
-          background: linear-gradient(90deg, #fff, var(--cyan));
-          -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-          text-shadow: 0 0 30px rgba(0,249,255,0.3);
-        }
-
-        /* UPGRADED HOLO-GRID & CARDS (Electric Aesthetic) */
-        .holo-grid { 
-          display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); 
-          gap: 2rem; padding: 0 4rem 15rem; max-w: 1600px; margin: 0 auto;
-        }
-        .holo-card { 
-          background: var(--glass); 
-          border: 1px solid var(--glass-border); 
-          border-radius: 12px; padding: 3rem 2.5rem; 
-          backdrop-filter: blur(25px);
-          transition: all 0.5s cubic-bezier(0.19, 1, 0.22, 1);
-          position: relative; overflow: hidden; text-align: left;
-          display: flex; flex-direction: column; align-items: flex-start;
-          box-shadow: 0 10px 40px rgba(0,0,0,0.4);
-        }
-        
-        /* Electric border effect inspired by image_0.png wireframe */
-        .holo-card::after {
-          content: ''; position: absolute; inset: 0;
-          border-radius: inherit; pointer-events: none;
-          background: linear-gradient(135deg, var(--cyan) 0%, var(--magenta) 50%, transparent 100%) border-box;
-          -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0);
-          -webkit-mask-composite: xor;
-          mask-composite: exclude;
-          border: 1.5px solid transparent; opacity: 0; transition: 0.4s;
-        }
-        
-        /* Floating particles behind card */
-        .holo-card::before {
-          content: ''; position: absolute; inset: -100%; width: 300%; height: 300%;
-          background-image: radial-gradient(circle, #fff 1px, transparent 1px);
-          background-size: 30px 30px; opacity: 0; transition: 0.6s; z-index: 0;
-        }
-
-        .holo-card:hover { 
-          border-color: transparent;
-          box-shadow: 0 20px 60px -15px rgba(0,249,255,0.4); 
-          transform: translateY(-10px) scale(1.02);
-        }
-        .holo-card:hover::after { opacity: 0.7; }
-        .holo-card:hover::before { opacity: 0.1; }
-        .holo-card:active, .holo-card.pressed { transform: scale(0.97) translateY(-5px); border-color: var(--magenta); }
-        
-        /* CARD ICONS & GLYPHS */
-        .card-glyph-container { margin-bottom: 2rem; relative; z-index: 10; color: var(--cyan); transition: 0.3s;}
-        .glyph { width: 56px; height: 56px; filter: drop-shadow(0 0 12px var(--cyan)); stroke-dasharray: 100; stroke-dashoffset: 0; transition: 0.3s; }
-        .glyph-face { width: 56px; height: 56px; position: relative; border: 2px solid var(--cyan); border-radius: 50%; display: grid; place-items: center; filter: drop-shadow(0 0 12px var(--cyan));}
-        .glyph-face .eye { width: 8px; height: 12px; background: #fff; border-radius: 5px; position: absolute; top: 15px; left: 16px;}
-        .glyph-face .eye.right { left: 32px;}
-        .glyph-rings { position: absolute; inset: -10px; opacity: 0.5; }
-        .glyph-char { font-size: 3.5rem; font-weight: 300; line-height: 1; filter: drop-shadow(0 0 12px var(--cyan)); }
-
-        .holo-card:hover .card-glyph-container { color: #fff; transform: scale(1.1); filter: drop-shadow(0 0 15px var(--cyan)); }
-        .holo-card:hover .glyph { stroke-dashoffset: 0; }
-
-        .card-title { font-size: 1.6rem; font-weight: 700; margin-bottom: 1rem; color: #fff; letter-spacing: 1.5px; relative; z-index: 10;}
-        .card-subtitle { font-size: 1.05rem; color: #acc1e3; line-height: 1.7; font-family: var(--font-mono); relative; z-index: 10;}
-
-        /* COMMAND NEXUS (Input Portal) */
-        .command-nexus-wrapper {
-          position: fixed; bottom: 2rem; left: 50%; transform: translateX(-50%);
-          width: 90%; max-width: 1000px; z-index: 300;
-        }
-        .command-nexus { 
-          background: rgba(3, 5, 15, 0.7); 
-          border: 1px solid rgba(0, 249, 255, 0.3); 
-          border-radius: 20px; padding: 0.8rem; 
-          display: flex; align-items: center; gap: 1rem;
-          backdrop-filter: blur(20px);
-          box-shadow: 0 20px 50px rgba(0,0,0,0.8);
-          animation: float 5s ease-in-out infinite, pulse-glow 4s infinite;
-        }
-        .command-nexus::after {
-          content: 'NEURAL INPUT INTERFACE'; position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%);
-          font-family: var(--font-mono); font-size: 0.65rem; color: #505080; letter-spacing: 3px;
-        }
-        .neural-input { 
-          flex: 1; background: transparent; border: none; 
-          padding: 1rem 1.5rem; color: white; font-size: 1.25rem; outline: none;
-          font-family: var(--font-sans); letter-spacing: 0.5px;
-        }
-        .neural-input::placeholder { color: rgba(143, 166, 199, 0.4); }
-        .forge-btn { 
-          padding: 1.2rem 2.5rem; 
-          background: linear-gradient(135deg, var(--cyan) 0%, var(--magenta) 100%); 
-          color: #000; font-weight: 800; font-size: 1.1rem; letter-spacing: 3px;
-          border: none; border-radius: 14px; cursor: pointer; text-transform: uppercase;
-          transition: all 0.3s ease; box-shadow: 0 0 20px rgba(192, 38, 211, 0.4);
-        }
-        .forge-btn:hover:not(:disabled) { transform: scale(1.05) translateY(-3px); box-shadow: 0 0 35px var(--cyan); color: #fff; }
-        .forge-btn:disabled { opacity: 0.5; filter: grayscale(1); box-shadow: none; }
-
-        /* BUILDLIO OUTPUT PORTAL */
-        .response-panel { 
-          margin: 0 auto 12rem; max-width: 1000px; width: 90%;
-          background: linear-gradient(180deg, rgba(10,15,35,0.85) 0%, rgba(5,8,20,0.9) 100%); 
-          border: 1px solid var(--cyan); border-radius: 14px; 
-          padding: 3rem; font-family: var(--font-mono); line-height: 1.8; 
-          box-shadow: 0 0 50px rgba(0,249,255,0.15); position: relative; z-index: 10;
-          font-size: 1.1rem; color: #d1e4ff; text-align: left;
-        }
-        .response-panel::before {
-          content: 'BUILDLIO APEX STATUS SYSTEM'; position: absolute; top: -14px; left: 30px;
-          background: #020208; padding: 0 12px; color: var(--cyan);
-          font-size: 0.8rem; letter-spacing: 4px; border: 1px solid var(--cyan); border-radius: 4px;
-        }
-        
-        /* HoloCore Internal CSS */
-        .holo-glyph { position: absolute; inset: 0;}
-        .core-wireframe { fill: none; strokeWidth: 1.5; stroke-linecap: round;}
-        .core-cyan { stroke: var(--cyan); filter: drop-shadow(0 0 10px var(--cyan)); }
-        .core-magenta { stroke: var(--magenta); filter: drop-shadow(0 0 10px var(--magenta)); stroke-width: 1;}
-        .holo-center { position: absolute; inset: 60px; background: rgba(0,249,255,0.05); border-radius: 50%;}
-        .status-label { position: absolute; bottom: -50px; width: 100%; text-align: center; color: var(--magenta); font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 4px; font-weight: 300; animation: fadeInBlur 1s ease-out;}
-        .lightning { position: absolute; background: #fff; border-radius: 50%; opacity: 0; animation: lightningFlicker 3s ease-in infinite; box-shadow: 0 0 30px #fff;}
-        .lightning-1 { width: 5px; height: 5px; top: 10px; left: 130px; animation-delay: 0.2s;}
-        .lightning-2 { width: 3px; height: 3px; top: 160px; left: 20px; animation-delay: 1.1s;}
-        .lightning-3 { width: 4px; height: 4px; top: 220px; left: 210px; animation-delay: 2.5s;}
-      `}</style>
-
-      <AetherLattice />
-
-      {/* Cinematic whole-screen CRT scanline overlay, fainter than original */}
-      <div className="fixed inset-0 pointer-events-none z-[999] opacity-[0.02] bg-[linear-gradient(transparent_50%,rgba(0,0,0,1)_50%)] bg-[length:100%_4px]"></div>
-
-      {!introComplete ? (
-        <IntroSequence onComplete={() => setIntroComplete(true)} />
-      ) : (
-        <div className="nexus-content animate-fade-in">
-          <nav className="hud">
-            <div className="hud-brand text-shadow-glow">BUILDLIO</div>
-            <button className="neural-login-btn" onClick={() => router.push("/login")}>Neural Login</button>
-          </nav>
-
-          <HoloCore status={isLoading ? "building" : "awake"} />
-
-          <div className="stage-header">
-            <h1 className="stage-title text-shadow-glow">{stageTitle[stage]}</h1>
-          </div>
-
-          <div key={stageKey} className="holo-grid animate-fade-in-blur">
-            {cards.map(c => (
-              <button 
-                key={c.key} 
-                className={`holo-card ${pressedKey === c.key ? "pressed" : ""}`} 
-                onClick={() => handleCardClick(c)}
-              >
-                <div className="card-glyph-container">{Icons[c.buildType] || Icons.other}</div>
-                <div className="card-title text-shadow-glow">{c.title}</div>
-                <div className="card-subtitle">{c.subtitle}</div>
-              </button>
-            ))}
-          </div>
-
-          {showResponse && (
-            <div className="response-panel">
-              {streamText}
-              <span className="animate-blink inline-block w-2.5 h-6 bg-cyan-400 ml-2 align-middle"></span>
+    <main className="min-h-screen bg-[linear-gradient(180deg,#f7f2ea_0%,#f3ece2_48%,#efe6db_100%)] text-stone-800">
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-[28px] border border-[#d9cbb8] bg-white/70 px-5 py-4 shadow-[0_12px_40px_rgba(146,116,78,0.10)] backdrop-blur">
+          <div className="flex items-center gap-4">
+            <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#b79267_0%,#8b6a4b_100%)] text-lg font-black text-white shadow-[0_12px_28px_rgba(146,116,78,0.28)]">
+              C
             </div>
-          )}
 
-          <div className="command-nexus-wrapper">
-            <form className="command-nexus" onSubmit={handleSubmit}>
-              <input
-                ref={inputRef}
-                value={draft}
-                onChange={e => setDraft(e.target.value)}
-                placeholder="Declare your directive. Submit to manifestation..."
-                className="neural-input"
-              />
-              <button type="submit" className="forge-btn" disabled={!draft.trim() || isLoading}>
-                {isLoading ? "MANIFESTING" : "INITIALIZE"}
-              </button>
-            </form>
+            <div>
+              <div className="text-[11px] font-black uppercase tracking-[0.24em] text-[#9c7b58]">
+                Southwest Virginia Chihuahua
+              </div>
+              <h1 className="font-serif text-2xl font-semibold tracking-tight text-[#4e3a28] sm:text-3xl">
+                ChiChi Assistant
+              </h1>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Link
+              href="/portal"
+              className="inline-flex items-center justify-center rounded-xl border border-[#d8cab7] bg-white px-4 py-2 text-sm font-semibold text-[#6f5338] shadow-sm transition hover:-translate-y-[1px] hover:bg-[#fffaf5]"
+            >
+              Open Portal
+            </Link>
+            <Link
+              href="/portal/messages"
+              className="inline-flex items-center justify-center rounded-xl bg-[#7b5b3f] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(123,91,63,0.24)] transition hover:bg-[#6e5037]"
+            >
+              Messages
+            </Link>
           </div>
         </div>
-      )}
+
+        <div className="grid gap-6 xl:grid-cols-12">
+          <section className="xl:col-span-8">
+            <div className="overflow-hidden rounded-[32px] border border-[#deceba] bg-white/72 shadow-[0_18px_52px_rgba(146,116,78,0.12)] backdrop-blur">
+              <div className="relative overflow-hidden border-b border-[#eadfce] px-6 py-6 sm:px-8">
+                <div className="absolute right-0 top-0 h-44 w-44 rounded-full bg-[#ecdcc8] blur-3xl opacity-70" />
+                <div className="absolute -left-8 bottom-0 h-32 w-32 rounded-full bg-[#f5e9d8] blur-3xl opacity-80" />
+
+                <div className="relative">
+                  <div className="mb-3 inline-flex items-center rounded-full border border-[#e7d8c5] bg-[#fffaf5]/90 px-3 py-1 text-[11px] font-black uppercase tracking-[0.24em] text-[#a17a54]">
+                    Account-aware support
+                  </div>
+
+                  <div className="grid gap-6 lg:grid-cols-[1.4fr_0.9fr]">
+                    <div>
+                      <h2 className="max-w-2xl font-serif text-3xl font-semibold leading-tight text-[#4f3a28] sm:text-4xl">
+                        {sessionChecked
+                          ? signedIn
+                            ? `Welcome back, ${accountLabel}`
+                            : "Your puppy portal assistant"
+                          : "Loading your account…"}
+                      </h2>
+
+                      <p className="mt-4 max-w-2xl text-sm leading-7 text-[#705742] sm:text-[15px]">
+                        ChiChi is here to answer questions about your puppy, payments,
+                        documents, messages, health records, milestones, and pickup or
+                        delivery details.
+                      </p>
+
+                      <div className="mt-6 flex flex-wrap gap-3">
+                        <div className="rounded-2xl border border-[#e7d8c5] bg-white/75 px-4 py-3 shadow-sm">
+                          <div className="text-[10px] font-black uppercase tracking-[0.22em] text-[#9f7d58]">
+                            Account
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-[#4e3a28]">
+                            {userEmail || "Not signed in"}
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl border border-[#e7d8c5] bg-white/75 px-4 py-3 shadow-sm">
+                          <div className="text-[10px] font-black uppercase tracking-[0.22em] text-[#9f7d58]">
+                            Puppy
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-[#4e3a28]">
+                            {signedIn ? puppyLabel : "Portal sign-in required"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-[28px] border border-[#e4d3be] bg-[linear-gradient(180deg,#fffaf4_0%,#fffdfb_100%)] p-5 shadow-sm">
+                      <div className="mb-3 text-[10px] font-black uppercase tracking-[0.22em] text-[#a07b56]">
+                        Best questions to ask
+                      </div>
+
+                      <div className="space-y-2">
+                        {STARTER_PROMPTS.slice(0, 4).map((prompt) => (
+                          <button
+                            key={prompt}
+                            type="button"
+                            onClick={() => usePrompt(prompt)}
+                            className="w-full rounded-2xl border border-[#eadcc9] bg-white px-4 py-3 text-left text-sm font-medium text-[#5f4632] transition hover:-translate-y-[1px] hover:bg-[#fff9f2]"
+                          >
+                            {prompt}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-0 lg:grid-cols-[1fr_320px]">
+                <div className="min-h-[620px] border-r border-[#eadfce] bg-[linear-gradient(180deg,#fffdfa_0%,#fff9f4_100%)]">
+                  <div className="h-[460px] overflow-y-auto px-5 py-5 sm:px-6">
+                    <div className="space-y-4">
+                      {messages.map((message) => {
+                        const isUser = message.role === "user";
+                        return (
+                          <div
+                            key={message.id}
+                            className={`flex ${isUser ? "justify-end" : "justify-start"}`}
+                          >
+                            <div
+                              className={[
+                                "max-w-[88%] rounded-[24px] px-4 py-3 shadow-sm sm:max-w-[78%]",
+                                isUser
+                                  ? "bg-[linear-gradient(135deg,#8b6a4b_0%,#6f5338_100%)] text-white"
+                                  : "border border-[#eadcc9] bg-white text-[#5a4330]",
+                              ].join(" ")}
+                            >
+                              <div className="whitespace-pre-wrap text-sm leading-7">
+                                {message.text}
+                              </div>
+                              <div
+                                className={`mt-2 text-[11px] ${
+                                  isUser ? "text-white/80" : "text-[#9b7c5a]"
+                                }`}
+                              >
+                                {message.createdAt}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {sending && (
+                        <div className="flex justify-start">
+                          <div className="max-w-[88%] rounded-[24px] border border-[#eadcc9] bg-white px-4 py-3 text-sm text-[#6a523d] shadow-sm">
+                            ChiChi is thinking…
+                          </div>
+                        </div>
+                      )}
+
+                      <div ref={chatEndRef} />
+                    </div>
+                  </div>
+
+                  <div className="border-t border-[#eadfce] bg-white/80 px-5 py-4 sm:px-6">
+                    <form onSubmit={handleSubmit} className="space-y-3">
+                      <div className="rounded-[26px] border border-[#dfcfba] bg-[#fffaf4] p-3 shadow-inner">
+                        <textarea
+                          ref={textareaRef}
+                          value={draft}
+                          onChange={(e) => setDraft(e.target.value)}
+                          rows={3}
+                          placeholder="Ask ChiChi about payments, updates, documents, milestones, messages, or your puppy’s health."
+                          className="w-full resize-none bg-transparent px-1 py-1 text-sm leading-6 text-[#4f3a28] outline-none placeholder:text-[#b19473]"
+                        />
+                      </div>
+
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div className="flex flex-wrap gap-2">
+                          {STARTER_PROMPTS.slice(0, 3).map((prompt) => (
+                            <button
+                              key={prompt}
+                              type="button"
+                              onClick={() => usePrompt(prompt)}
+                              className="rounded-full border border-[#e3d5c3] bg-white px-3 py-1.5 text-xs font-semibold text-[#7b5f43] transition hover:bg-[#fff8f0]"
+                            >
+                              {prompt}
+                            </button>
+                          ))}
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={sending || !draft.trim()}
+                          className="inline-flex items-center justify-center rounded-xl bg-[#7b5b3f] px-5 py-2.5 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(123,91,63,0.24)] transition hover:bg-[#6e5037] disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          {sending ? "Sending…" : "Send"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+
+                <aside className="bg-[linear-gradient(180deg,#fff8f0_0%,#fffdfb_100%)] px-5 py-5 sm:px-6">
+                  <div className="space-y-4">
+                    <div className="rounded-[26px] border border-[#e5d6c4] bg-white p-5 shadow-sm">
+                      <div className="mb-3 text-[10px] font-black uppercase tracking-[0.22em] text-[#a07b56]">
+                        Account snapshot
+                      </div>
+
+                      <div className="space-y-3">
+                        <div className="rounded-2xl bg-[#faf3ea] px-4 py-3">
+                          <div className="text-[11px] font-black uppercase tracking-[0.16em] text-[#9c7853]">
+                            Buyer
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-[#4f3a28]">
+                            {signedIn ? accountLabel : "Not signed in"}
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl bg-[#faf3ea] px-4 py-3">
+                          <div className="text-[11px] font-black uppercase tracking-[0.16em] text-[#9c7853]">
+                            Puppy
+                          </div>
+                          <div className="mt-1 text-sm font-semibold text-[#4f3a28]">
+                            {signedIn ? puppyLabel : "Portal sign-in required"}
+                          </div>
+                        </div>
+
+                        <div className="rounded-2xl bg-[#faf3ea] px-4 py-3">
+                          <div className="text-[11px] font-black uppercase tracking-[0.16em] text-[#9c7853]">
+                            Thread
+                          </div>
+                          <div className="mt-1 break-all text-sm font-semibold text-[#4f3a28]">
+                            {threadId || "A new conversation will be created automatically"}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="rounded-[26px] border border-[#e5d6c4] bg-white p-5 shadow-sm">
+                      <div className="mb-3 text-[10px] font-black uppercase tracking-[0.22em] text-[#a07b56]">
+                        What ChiChi can help with
+                      </div>
+
+                      <div className="space-y-3">
+                        {quickFacts.map((item) => (
+                          <div
+                            key={item.label}
+                            className="rounded-2xl border border-[#eee2d3] bg-[#fffaf4] px-4 py-3"
+                          >
+                            <div className="text-[11px] font-black uppercase tracking-[0.16em] text-[#9d7a55]">
+                              {item.label}
+                            </div>
+                            <div className="mt-1 text-sm font-semibold text-[#4f3a28]">
+                              {item.value}
+                            </div>
+                            <div className="mt-1 text-xs leading-5 text-[#876a4d]">
+                              {item.sub}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[26px] border border-[#e5d6c4] bg-white p-5 shadow-sm">
+                      <div className="mb-3 text-[10px] font-black uppercase tracking-[0.22em] text-[#a07b56]">
+                        Portal links
+                      </div>
+
+                      <div className="grid gap-2">
+                        {[
+                          { href: "/portal/mypuppy", label: "My Puppy" },
+                          { href: "/portal/payments", label: "Payments" },
+                          { href: "/portal/documents", label: "Documents" },
+                          { href: "/portal/messages", label: "Messages" },
+                          { href: "/portal/transportation", label: "Transportation" },
+                        ].map((link) => (
+                          <Link
+                            key={link.href}
+                            href={link.href}
+                            className="rounded-2xl border border-[#eadcc8] bg-[#fffaf4] px-4 py-3 text-sm font-semibold text-[#654b35] transition hover:bg-white"
+                          >
+                            {link.label}
+                          </Link>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="rounded-[26px] border border-[#e5d6c4] bg-white p-5 shadow-sm">
+                      <div className="mb-2 text-[10px] font-black uppercase tracking-[0.22em] text-[#a07b56]">
+                        Notes
+                      </div>
+                      <p className="text-sm leading-7 text-[#765b42]">
+                        ChiChi is designed to answer from your portal data when you’re
+                        signed in. If a detail is missing from your account, ChiChi will
+                        say so instead of guessing.
+                      </p>
+                    </div>
+                  </div>
+                </aside>
+              </div>
+            </div>
+          </section>
+
+          <section className="xl:col-span-4">
+            <div className="space-y-5">
+              <div className="overflow-hidden rounded-[32px] border border-[#ddcfbd] bg-white/72 p-6 shadow-[0_18px_52px_rgba(146,116,78,0.12)] backdrop-blur">
+                <div className="mb-3 flex items-center gap-3">
+                  <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#d7b28d_0%,#b38a61_100%)] text-sm font-black text-white">
+                    {initialsFromEmail(userEmail)}
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-black uppercase tracking-[0.22em] text-[#9d7b56]">
+                      Portal session
+                    </div>
+                    <div className="text-sm font-semibold text-[#4e3a28]">
+                      {signedIn ? "Connected" : "Not connected"}
+                    </div>
+                  </div>
+                </div>
+
+                <p className="text-sm leading-7 text-[#705742]">
+                  {signedIn
+                    ? "Your portal session is active. ChiChi can use your account context to answer questions more accurately."
+                    : "Sign in through your portal account to let ChiChi answer with your real buyer, puppy, payment, and document data."}
+                </p>
+
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <Link
+                    href="/portal"
+                    className="inline-flex items-center justify-center rounded-xl bg-[#7b5b3f] px-4 py-2 text-sm font-semibold text-white shadow-[0_10px_24px_rgba(123,91,63,0.24)] transition hover:bg-[#6e5037]"
+                  >
+                    Go to Portal
+                  </Link>
+
+                  <Link
+                    href="/portal/profile"
+                    className="inline-flex items-center justify-center rounded-xl border border-[#dccdbb] bg-white px-4 py-2 text-sm font-semibold text-[#6f5338] transition hover:bg-[#fffaf5]"
+                  >
+                    Profile
+                  </Link>
+                </div>
+              </div>
+
+              <div className="overflow-hidden rounded-[32px] border border-[#ddcfbd] bg-[linear-gradient(180deg,#fffaf4_0%,#fffdfb_100%)] p-6 shadow-[0_18px_52px_rgba(146,116,78,0.10)]">
+                <div className="mb-4 text-[10px] font-black uppercase tracking-[0.22em] text-[#9d7b56]">
+                  Suggested questions
+                </div>
+
+                <div className="grid gap-3">
+                  {STARTER_PROMPTS.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => usePrompt(prompt)}
+                      className="rounded-2xl border border-[#e8dac8] bg-white px-4 py-3 text-left text-sm font-medium text-[#5e4734] transition hover:-translate-y-[1px] hover:bg-[#fffaf4]"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
     </main>
   );
 }
